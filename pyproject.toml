@@ -10,11 +10,19 @@ authors = [
 ]
 description = "Experiments with tiny world models"
 readme = "README.md"
-requires-python = "==3.12"
+requires-python = "==3.12.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+    "einops>=0.8.2",
+    "lerobot>=0.5.1",
+    "mediapy>=1.2.6",
+    "numpy>=2.2.6",
+    "opencv-python>=4.13.0.92",
+    "tqdm>=4.68.3",
 ]
 
 [project.urls]

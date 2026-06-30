@@ -1,4 +1,6 @@
 *.swp
 *.swo
 
+uv.lock
+
 __pycache__
