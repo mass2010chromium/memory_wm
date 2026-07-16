@@ -78,10 +78,11 @@ class Attention(nn.Module):
         drop = self.dropout if self.training else 0.0
         qkv = self.to_qkv(x).chunk(3, dim=-1)  # q, k, v: (B, heads, T, dim_head)
         q, k, v = (rearrange(t, "b t (h d) -> b h t d", h=self.heads) for t in qkv)
-        attn_mask = rearrange(attn_mask, "b x y -> b 1 x y")    # Account for attention heads
+        if attn_mask is not None:
+            attn_mask = rearrange(attn_mask, "b x y -> b 1 x y")    # Account for attention heads
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=drop, attn_mask=attn_mask, is_causal=causal)
         out = rearrange(out, "b h t d -> b t (h d)")
-        return self.to_out(out)
+        return x + self.to_out(out)
 
 
 def modulate(x, shift, scale):
@@ -109,7 +110,10 @@ class ConditionalBlock(nn.Module):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
             self.adaLN_modulation(c).chunk(6, dim=-1)
         )
-        x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa), attn_mask=mask, causal=False)
+        if mask is None:
+            x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa), attn_mask=mask, causal=False)
+        else:
+            x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa), causal=True)
         x = x + gate_mlp * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
@@ -126,7 +130,10 @@ class Block(nn.Module):
         self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
     def forward(self, x, mask):
-        x = x + self.attn(self.norm1(x), attn_mask=mask, causal=False)
+        if mask is None:
+            x = x + self.attn(self.norm1(x), causal=True)
+        else:
+            x = x + self.attn(self.norm1(x), attn_mask=mask, causal=False)
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -160,7 +167,7 @@ class Transformer(nn.Module):
                 block_class(hidden_dim, heads, dim_head, mlp_dim, dropout)
             )
 
-    def forward(self, x, mask, c=None):
+    def forward(self, x, mask=None, c=None):
 
         if c is not None and hasattr(self, "cond_proj"):
             c = self.cond_proj(c)
@@ -189,6 +196,12 @@ class MLP(nn.Module):
             nn.Linear(input_dim, hidden_dim),
             norm_fn,
             act_fn(),
+            nn.Linear(hidden_dim, hidden_dim),
+            norm_fn,
+            act_fn(),
+            nn.Linear(hidden_dim, hidden_dim),
+            norm_fn,
+            act_fn(),
             nn.Linear(hidden_dim, output_dim or input_dim),
         )
 
@@ -212,6 +225,7 @@ class Predictor(nn.Module):
         action_dim,
         input_dim,
         hidden_dim,
+        past_taps=5,
         dim_head=64,
         dropout=0.0,
         #emb_dropout=0.0,
@@ -223,7 +237,17 @@ class Predictor(nn.Module):
 
         self.token_proj = nn.Linear(input_dim, hidden_dim)
 
-        self.transformer = Transformer(
+        self.obs_embedder = Transformer(
+            hidden_dim,
+            hidden_dim,
+            depth,
+            heads,
+            dim_head,
+            mlp_dim,
+            dropout,
+            block_class=Block,
+        )
+        self.dynamics = Transformer(
             action_dim,
             hidden_dim,
             depth,
@@ -233,8 +257,25 @@ class Predictor(nn.Module):
             dropout,
             block_class=ConditionalBlock,
         )
+        self.reconstruction = MLP(
+            hidden_dim,
+            hidden_dim * 2,
+            hidden_dim
+        )
+        self.past_predictor = Transformer(
+            hidden_dim, 
+            hidden_dim,
+            depth,
+            heads,
+            dim_head,
+            mlp_dim,
+            dropout,
+            block_class=Block
+        )
+        self.past_taps = past_taps
+        self.past_embedding = nn.Parameter(torch.randn(past_taps, hidden_dim))
 
-    def forward(self, prior_latents, x, token_mask, categories_onehot, c):
+    def forward(self, _prior_latents, x, token_mask, categories_onehot, c):
         """
         prior_latents: (B, d_hidden)
         x: (B, ntok, d_obs)
@@ -245,26 +286,52 @@ class Predictor(nn.Module):
         Return: (B, d_hidden)
         """
         B, ntok, _ = x.shape
-        T = x.size(1)
+        prior_latents = rearrange(_prior_latents, "b d -> b 1 d")
+
+        obs_embedding = self.embed_obs(x, token_mask, categories_onehot)
+
+        history_and_obs = torch.cat((prior_latents, rearrange(obs_embedding, "b d -> b 1 d")), 1)
+        # Required since we are doing single-step single-step prediction... no action or state history.
+        c = rearrange(c, "b a -> b 1 a") # For conditionalblock
+
+        # Token 0 is the open loop latent (evolved with conditioning c)
+        # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
+        latents = self.dynamics(history_and_obs, mask=None, c=c)
+
+        obs_reconstruct = self.reconstruction(latents[:, 1, :])
+        return obs_embedding, latents, obs_reconstruct, self.predict_past(_prior_latents)
+
+    def embed_obs(self, x, token_mask, categories_onehot):
+        B, ntok, _ = x.shape
         #x = self.dropout(x)
         x = self.token_proj(x)  # B, ntok, d_hidden
+        # index into category embeddings via matrix multiply
         x = x + einsum(self.cat_embedding, categories_onehot.float(), "x c, b n c -> b n x")
-        prior_latents = rearrange(prior_latents, "b d -> b 1 d")
-        x = torch.cat((prior_latents, x), 1)
-
+        #x = torch.cat((prior_latents, x), 1)   # For conditionalblock
         # NOTE: padding acts on the LAST dimension. (left, right)
-        mask_pad1 = F.pad(token_mask.int(), (1, 0), "constant", 0)
+        #mask_pad1 = F.pad(token_mask.int(), (1, 0), "constant", 0)
         attention_mask = einsum(
-            torch.ones(ntok+1, device=x.device),
-            mask_pad1,
+            #torch.ones(ntok+1, device=x.device),   # For conditionalblock
+            torch.ones(ntok, device=x.device),
+            token_mask,
             "d, b n -> b d n"
         )
-        # Required since we are doing single-step single-step prediction... no action or state history.
-        c = rearrange(c, "b a -> b 1 a")
-
         # lower right should be 1s whenever there is a nonzero mask token.
         # First column is all 1s, so that everyone can attend to the prior latent
-        attention_mask[:, :, 0] = 1
-        x = self.transformer(x, attention_mask, c)
+        #attention_mask[:, :, 0] = 1
+        x = self.obs_embedder(x, attention_mask)
         return x[:, -1, :]  # Return last token embedding
+        
 
+    def predict_past(self, latent):
+        B, n = latent.shape
+        x = torch.cat(
+            (
+                rearrange(latent, 'b n -> b 1 n'),
+                rearrange(self.past_embedding, 'k n -> 1 k n').expand(B, self.past_taps, n)
+            ),
+            1
+        )
+        results = self.past_predictor(x)
+        return results[:, -self.past_taps:, :]
+        #return rearrange(self.past_predictor(latent), "b (k n) -> b k n", k=self.past_taps)

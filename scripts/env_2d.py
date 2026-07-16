@@ -2,8 +2,12 @@ import numpy as np
 import cv2
 
 OBS_SIZE = 4
-N_TYPES = 3
+N_TYPES = 5 # 3, plus END and SINGLE
+MAX_TOKENS = 6  # +1 for END token
 INTERACTION_DISTANCE = 0.1
+
+END_ID = N_TYPES - 2
+SINGLE_ID = N_TYPES - 1
 
 def sample_pos(spec):
     pos_min = np.array(spec['min'])
@@ -64,6 +68,16 @@ class Robot:
             radius=3, color=(255, 0, 0), thickness=-1
         )
 
+def put_centered_text(img, text, center, font=cv2.FONT_HERSHEY_SIMPLEX,
+                      font_scale=0.30, color=(255, 255, 255), thickness=1,
+                      line_type=cv2.LINE_AA):
+    """Draw `text` centered (both horizontally and vertically) on `center`."""
+    (w, h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    cx, cy = center
+    org = (int(cx - w / 2), int(cy + h / 2))  # putText wants bottom-left origin
+    cv2.putText(img, text, org, font, font_scale, color, thickness, line_type)
+    return img
+
 class Container:
     _typeid = 1
 
@@ -99,11 +113,13 @@ class Container:
     def pickup(self):
         return self.items.pop(-1)
 
-    def render(self, canvas, min_bounds, max_bounds):
+    def render(self, canvas, min_bounds, max_bounds, draw_items=False):
         midpoint = normalize_pos(canvas, min_bounds, max_bounds, self.pos)
-        p1 = midpoint - [4, 4]
-        p2 = midpoint + [4, 4]
-        cv2.rectangle(canvas, p1, p2, color=(0, 0, 0), thickness=2)
+        p1 = midpoint - [5, 5]
+        p2 = midpoint + [5, 5]
+        cv2.rectangle(canvas, p1, p2, color=(0, 0, 0), thickness=1)
+        if draw_items:
+            put_centered_text(canvas, str(len(self.items)), midpoint, color=(0, 0, 0))
 
 class Item:
     _typeid = 2
@@ -117,6 +133,7 @@ class Item:
         self.id = numeric_id
         self.pos = pos
         self.type = item_type
+        self.color = (0, 0, 255)
 
     def get_local_obs(self):
         return [self.type]
@@ -134,7 +151,7 @@ class Item:
         cv2.circle(
             canvas,
             center=normalize_pos(canvas, min_bounds, max_bounds, self.pos),
-            radius=2, color=(0, 0, 255), thickness=-1
+            radius=2, color=self.color, thickness=-1
         )
 
 class World2d:
@@ -229,12 +246,16 @@ class World2d:
         }
 
 
-    def render(self, resolution=256):
+    def render(self, resolution=256, draw_items=False, bounds=None):
         canvas = np.ones((resolution, resolution, 3), dtype=np.uint8) * 255
-        min_bounds = np.array(self.data['bounds']['min'])
-        max_bounds = np.array(self.data['bounds']['max'])
+        if bounds is None:
+            min_bounds = np.array(self.data['bounds']['min'])
+            max_bounds = np.array(self.data['bounds']['max'])
+        else:
+            min_bounds = np.array(bounds[0])
+            max_bounds = np.array(bounds[1])
         for c in self.containers:
-            c.render(canvas, min_bounds, max_bounds)
+            c.render(canvas, min_bounds, max_bounds, draw_items=draw_items)
         self.robot.render(canvas, min_bounds, max_bounds)
         for i in self.items:
             i.render(canvas, min_bounds, max_bounds)
@@ -252,11 +273,18 @@ def tokenize_obs(obs, pad_to_size=None):
     for item_category, item_token in obs['items']:
         categories.append(item_category)
         tokens.append(item_token)
+
+    tokens.append(np.zeros(OBS_SIZE))
+    categories.append(np.eye(N_TYPES, dtype=np.bool)[END_ID])
     if pad_to_size is not None:
         while len(tokens) < pad_to_size:
             categories.append(np.zeros(N_TYPES, dtype=np.bool))
             tokens.append(np.zeros(OBS_SIZE))
+
+    token_mask = np.zeros(MAX_TOKENS, dtype=np.bool)
+    token_mask[0:2 + len(obs['containers']) + len(obs['items'])] = 1
     return (
         np.stack(tokens),
-        np.stack(categories)
+        np.stack(categories),
+        token_mask
     )
