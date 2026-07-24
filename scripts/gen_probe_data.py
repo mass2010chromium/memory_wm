@@ -13,7 +13,7 @@ from robot_utils import model_update, control_robot_to, gen_sample
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "199.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -33,20 +33,20 @@ if __name__ == "__main__":
     latents = []
 
     nsample = 5000
-    # for i in tqdm.trange(nsample):
-    #     obs1, real1, latent1 = gen_sample(world, model, seed=i, container=0)
-    #     obs2, real2, latent2 = gen_sample(world, model, seed=i, container=1)
-    #     pos1 = world.containers[0].pos
-    #     pos2 = world.containers[1].pos
+    for i in tqdm.trange(nsample):
+        obs1, real1, latent1 = gen_sample(world, model, seed=i, container=0)
+        obs2, real2, latent2 = gen_sample(world, model, seed=i, container=1)
+        pos1 = world.containers[0].pos
+        pos2 = world.containers[1].pos
 
-    #     positions.append(pos1)
-    #     latents.append(latent1[-1].numpy())
+        positions.append(pos1)
+        latents.append(latent1[-1].numpy())
 
-    #     positions.append(pos2)
-    #     latents.append(latent2[-1].numpy())
+        positions.append(pos2)
+        latents.append(latent2[-1].numpy())
 
-    # np.save("probe_positions.npy", np.stack(positions))
-    # np.save("probe_latents.npy", np.stack(latents))
+    np.save("probe_positions.npy", np.stack(positions))
+    np.save("probe_latents.npy", np.stack(latents))
 
     positions = []
     latents = []

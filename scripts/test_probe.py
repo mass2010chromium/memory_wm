@@ -20,7 +20,7 @@ hidden_size = 192
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "399.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -48,8 +48,9 @@ if __name__ == "__main__":
     fake_item.color = (0, 255, 0)
     image_out_dir = os.path.join(SCRIPT_DIR, "renders")
     os.makedirs(image_out_dir, exist_ok=True)
-    for i in tqdm.trange(5000, 5020):
-        print(i)
+    successes = 0
+    fails = 0
+    for i in tqdm.trange(10000, 10100):
         obs1, real1, latent1 = gen_sample(world, model, seed=i, container=0)
         canvas = world.render(resolution=512, draw_items=True, bounds=[min_bounds, max_bounds])
         with torch.no_grad():
@@ -69,6 +70,8 @@ if __name__ == "__main__":
         target_vec = world.containers[1].pos - world.containers[0].pos
         real_vec = p1 - p0
         if (real_vec @ target_vec) > 0:
-            print("success")
+            successes += 1
         else:
-            print("failure")
+            fails += 1
+
+    print(f"Success rate: {successes}/{successes+fails}")

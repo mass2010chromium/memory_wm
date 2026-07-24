@@ -275,7 +275,7 @@ class Predictor(nn.Module):
         self.past_taps = past_taps
         self.past_embedding = nn.Parameter(torch.randn(past_taps, hidden_dim))
 
-    def forward(self, _prior_latents, x, token_mask, categories_onehot, c):
+    def forward(self, prior_latents, x, token_mask, categories_onehot, c):
         """
         prior_latents: (B, d_hidden)
         x: (B, ntok, d_obs)
@@ -285,21 +285,23 @@ class Predictor(nn.Module):
 
         Return: (B, d_hidden)
         """
-        B, ntok, _ = x.shape
-        prior_latents = rearrange(_prior_latents, "b d -> b 1 d")
-
         obs_embedding = self.embed_obs(x, token_mask, categories_onehot)
 
-        history_and_obs = torch.cat((prior_latents, rearrange(obs_embedding, "b d -> b 1 d")), 1)
+        latents = self.predict_latent(prior_latents, obs_embedding, c)
+
+        obs_reconstruct = self.reconstruction(latents[:, 1, :])
+        return obs_embedding, latents, obs_reconstruct, self.predict_past(prior_latents)
+
+    def predict_latent(self, prior_latents, obs_embedding, action):
         # Required since we are doing single-step single-step prediction... no action or state history.
-        c = rearrange(c, "b a -> b 1 a") # For conditionalblock
+        c = rearrange(action, "b a -> b 1 a") # For conditionalblock
+        prior_latents = rearrange(prior_latents, "b d -> b 1 d")
+        history_and_obs = torch.cat((prior_latents, rearrange(obs_embedding, "b d -> b 1 d")), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
-        latents = self.dynamics(history_and_obs, mask=None, c=c)
+        return self.dynamics(history_and_obs, mask=None, c=c)
 
-        obs_reconstruct = self.reconstruction(latents[:, 1, :])
-        return obs_embedding, latents, obs_reconstruct, self.predict_past(_prior_latents)
 
     def embed_obs(self, x, token_mask, categories_onehot):
         B, ntok, _ = x.shape

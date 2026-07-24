@@ -54,6 +54,7 @@ class SmallPackedDataset(Dataset):
         if root is None:
             self.keys = keys
             self.data = data
+            self.data_map = {k: self.data[i] for i, k in enumerate(self.keys)}
         else:
             with open(os.path.join(root, "meta.json"), "r") as jf:
                 self.keys = json.load(jf)
@@ -61,6 +62,7 @@ class SmallPackedDataset(Dataset):
             self.data = []
             for i in range(len(self.keys)):
                 self.data.append(np.load(os.path.join(root, f"{i}.npy")))
+            self.data_map = {k: self.data[i] for i, k in enumerate(self.keys)}
 
     def __len__(self):
         return len(self.data[0])

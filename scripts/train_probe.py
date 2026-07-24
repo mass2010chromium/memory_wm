@@ -1,4 +1,5 @@
 import os
+import sys
 SCRIPT_DIR = os.path.dirname(__file__)
 
 from einops import rearrange
@@ -12,10 +13,15 @@ from probe_network import MLPProbe
 
 torch.manual_seed(0)
 
-positions = torch.tensor(np.load(os.path.join(SCRIPT_DIR, "probe_positions.npy"))).cuda()
-latents = rearrange(torch.tensor(np.load(os.path.join(SCRIPT_DIR, "probe_latents.npy"))), "b 1 n -> b n").cuda()
-positions_val = torch.tensor(np.load(os.path.join(SCRIPT_DIR, "probe_positions_val.npy"))).cuda()
-latents_val = rearrange(torch.tensor(np.load(os.path.join(SCRIPT_DIR, "probe_latents_val.npy"))), "b 1 n -> b n").cuda()
+if len(sys.argv) > 1:
+    ROOT_DIR = os.path.expanduser(sys.argv[1])
+else:
+    ROOT_DIR = SCRIPT_DIR
+
+positions = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions.npy"))).cuda()
+latents = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents.npy"))), "b 1 n -> b n").cuda()
+positions_val = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions_val.npy"))).cuda()
+latents_val = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents_val.npy"))), "b 1 n -> b n").cuda()
 
 model = MLPProbe().cuda()
 
@@ -48,9 +54,13 @@ def get_loss_contrastive(pred_positions, actual_positions):
     return -dots.mean() + distance.mean()
     
 
-n_epochs = 10000
+n_epochs = 1000
 optimizer = optim.AdamW(model.parameters(), lr=1e-3)
 #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
+
+best_val_acc = 0
+best_val_err = 0
+best_val_iter = 0
  
 for epoch in tqdm.trange(1, n_epochs + 1):
     model.train()
@@ -69,15 +79,21 @@ for epoch in tqdm.trange(1, n_epochs + 1):
  
     train_loss = running_loss
 
+    model.eval()
+    with torch.no_grad():
+        pred_positions_val = model(latents_val)
+        val_error = get_loss_contrastive(pred_positions_val, positions_val)
+        #val_error = (pred_positions_val - positions_val).pow(2).mean()
+        #val_error = (pred_positions_val - positions_val).abs().mean()
+        val_accuracy = get_accuracy(pred_positions_val, positions_val)
+        if val_accuracy > best_val_acc:
+            best_val_acc = val_accuracy
+            best_val_err = val_error
+            best_val_iter = epoch
+            torch.save(model.state_dict(), os.path.join(ROOT_DIR, "best.pth"))
     if epoch % 100 == 0:
-        model.eval()
-        with torch.no_grad():
-            pred_positions_val = model(latents_val)
-            val_error = get_loss_contrastive(pred_positions_val, positions_val)
-            #val_error = (pred_positions_val - positions_val).pow(2).mean()
-            #val_error = (pred_positions_val - positions_val).abs().mean()
-            val_accuracy = get_accuracy(pred_positions_val, positions_val)
         print(f"Epoch {epoch:2d} | train err: {train_loss:.4f} | val err: {val_error} | val acc: {val_accuracy}")
 
 
-torch.save(model.state_dict(), os.path.join(SCRIPT_DIR, "probe.pth"))
+print(f"Best: epoch {best_val_iter} acc {best_val_acc} err {best_val_err}")
+torch.save(model.state_dict(), os.path.join(ROOT_DIR, "probe.pth"))

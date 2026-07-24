@@ -17,6 +17,7 @@ def model_update(model, latent, obs, action):
             action.unsqueeze(0).cuda()
         )
         return latents[:, 1, :]
+        #return obs_emb # For JEPA only
 
 def control_robot_to(world: World2d, target, model, prev_obs, prev_latent, speed_factor=1, interaction=0):
     chosen_speed = speed_factor * world.robot.max_speed

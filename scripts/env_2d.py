@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 
 OBS_SIZE = 4
+ACTION_SIZE = 3
 N_TYPES = 5 # 3, plus END and SINGLE
 MAX_TOKENS = 6  # +1 for END token
 INTERACTION_DISTANCE = 0.1
