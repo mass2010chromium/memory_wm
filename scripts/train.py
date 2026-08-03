@@ -57,7 +57,7 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().cuda()
-start_epoch = 100
+start_epoch = 450
 model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
 #start_epoch = 0
 #model, optimizer, latent_cache, observation_cache = init_model(config)
@@ -72,7 +72,7 @@ use_temporal_straightening = True
 if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
-with wandb.init(name="mini-wm-past-predict") as run:
+with wandb.init(name="mini-wm-past-predict-fix") as run:
     for epoch in range(start_epoch, num_epochs):
         model.train()
         running_loss = 0.0
@@ -126,7 +126,6 @@ with wandb.init(name="mini-wm-past-predict") as run:
             past_loss_2 = past_error.pow(2).mean()
             past_loss_8 = past_error_8.pow(2).mean()
             past_loss = past_loss_2 + past_loss_8
-
             cl_latents = latents[:, 1, :]
             ol_latents = latents[:, 0, :]
 
@@ -139,6 +138,8 @@ with wandb.init(name="mini-wm-past-predict") as run:
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
             loss = pred_loss + latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
+            # Ablation: No past loss version, only sigreg and reconstruction
+            # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
             # Ablation: No reconstruction loss version, only sigreg
             #loss = latent_pred_loss + past_loss + 0.09 * sigreg_loss
             outputs = cl_latents

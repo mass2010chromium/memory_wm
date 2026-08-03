@@ -13,7 +13,7 @@ from robot_utils import model_update, control_robot_to, gen_sample
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "499.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])

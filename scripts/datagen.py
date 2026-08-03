@@ -61,16 +61,15 @@ def gen_trajectory_single(world: World2d, dataset: LeRobotDataset):
         motion = target_point - world.robot.pos
         distance = np.linalg.norm(motion)
         motion = motion * (min(chosen_speed, distance) / distance)
-        closest_obj = obs['closest']
 
         action = np.zeros(3)
         action[0:2] = motion
-        if np.linalg.norm(closest_obj.pos - world.robot.pos) < INTERACTION_DISTANCE:
+        if obs['pickup'] is not None and world.robot.inventory is None:
             if np.random.random() < INTERACTION_PROB * speed_multiple:
-                if world.robot.inventory is None:
-                    action[2] = 1.0
-                else:
-                    action[2] = -1.0
+                action[2] = 1.0
+        elif obs['drop'] is not None and world.robot.inventory is not None:
+            if np.random.random() < INTERACTION_PROB * speed_multiple:
+                action[2] = -1.0
         if world.robot.inventory is not None:
             if np.random.random() < DROP_PROB * speed_multiple:
                 action[2] = -1.0
@@ -113,16 +112,15 @@ def gen_trajectory_random_walk(world: World2d, dataset: LeRobotDataset):
             motion = target_point - world.robot.pos
             distance = np.linalg.norm(motion)
             motion = motion * (min(chosen_speed, distance) / distance)
-            closest_obj = obs['closest']
 
             action = np.zeros(3)
             action[0:2] = motion
-            if np.linalg.norm(closest_obj.pos - world.robot.pos) < INTERACTION_DISTANCE:
+            if obs['pickup'] is not None and world.robot.inventory is None:
                 if np.random.random() < INTERACTION_PROB * speed_multiple:
-                    if world.robot.inventory is None:
-                        action[2] = 1.0
-                    else:
-                        action[2] = -1.0
+                    action[2] = 1.0
+            elif obs['drop'] is not None and world.robot.inventory is not None:
+                if np.random.random() < INTERACTION_PROB * speed_multiple:
+                    action[2] = -1.0
             if world.robot.inventory is not None:
                 if np.random.random() < DROP_PROB * speed_multiple:
                     action[2] = -1.0

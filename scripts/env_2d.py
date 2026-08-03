@@ -3,10 +3,12 @@ import cv2
 
 OBS_SIZE = 4
 ACTION_SIZE = 3
-N_TYPES = 5 # 3, plus END and SINGLE
-MAX_TOKENS = 6  # +1 for END token
+N_TYPES = 7 # 3, plus END and SINGLE
+MAX_TOKENS = 8  # +1 for END token
 INTERACTION_DISTANCE = 0.1
 
+CLOSE_PICKUP_ID = N_TYPES - 4
+CLOSE_DROP_ID = N_TYPES - 3
 END_ID = N_TYPES - 2
 SINGLE_ID = N_TYPES - 1
 
@@ -98,7 +100,8 @@ class Container:
     def get_obs(self):
         return np.array([
             *self.pos,
-            len(self.items),
+            0,  # Remove length observation
+            #len(self.items),
             self.capacity
         ])
 
@@ -170,11 +173,13 @@ class World2d:
         ]
         return self.get_obs()
 
-    def get_closest_item(self, target_pos):
+    def get_closest_pickup(self, target_pos):
         closest_dist = np.inf
         closest_item = None
         item_index = None
         for item in self.containers:
+            if not item.can_pickup():
+                continue
             dist = np.linalg.norm(target_pos - item.pos)
             if dist < closest_dist:
                 closest_item = item
@@ -187,18 +192,26 @@ class World2d:
                 closest_dist = dist
                 item_index = i
         return closest_dist, closest_item, item_index
+
+    def get_closest_drop(self, target_pos, item):
+        closest_dist = np.inf
+        closest_item = None
+        for item in self.containers:
+            if not item.can_emplace(item):
+                continue
+            dist = np.linalg.norm(target_pos - item.pos)
+            if dist < closest_dist:
+                closest_item = item
+                closest_dist = dist
+        return closest_dist, closest_item
     
     def update(self, act):
         # Do this twice; so that the robot can "act on the observation".
-        closest_dist, closest_item, item_index = self.get_closest_item(self.robot.pos)
 
-        if act[2] > 0.5:
+        if act[2] > 0.5 and self.robot.inventory is None:
             # Pickup item.
-            if (
-                self.robot.inventory is None and
-                closest_dist < INTERACTION_DISTANCE and
-                closest_item.can_pickup()
-            ):
+            closest_dist, closest_item, item_index = self.get_closest_pickup(self.robot.pos)
+            if closest_dist < INTERACTION_DISTANCE:
                 # Container pickup() uses pop() to remove from list
                 self.robot.inventory = closest_item.pickup()
 
@@ -206,31 +219,46 @@ class World2d:
                 if item_index is not None:
                     self.items.pop(item_index)
 
-        elif act[2] < -0.5:
+        elif act[2] < -0.5 and self.robot.inventory is not None:
             # Drop item.
-            if self.robot.inventory is not None:
-                # If you can place the item into a container....
-                if (
-                    closest_dist < INTERACTION_DISTANCE and
-                    type(closest_item) == Container and
-                    closest_item.can_emplace(self.robot.inventory)
-                ):
-                    closest_item.emplace(self.robot.inventory)
-                    self.robot.inventory = None
-                # Otherwise, just drop it on the ground
-                else:
-                    drop_item = self.robot.inventory
-                    # This can delete information from the robot's sensors...
-                    drop_item.pos = np.copy(self.robot.pos)
-                    self.items.append(drop_item)
-                    self.robot.inventory = None
+            closest_dist, closest_item = self.get_closest_drop(self.robot.pos, self.robot.inventory)
+            # If you can place the item into a container....
+            if closest_dist < INTERACTION_DISTANCE:
+                closest_item.emplace(self.robot.inventory)
+                self.robot.inventory = None
+            # Otherwise, just drop it on the ground
+            else:
+                drop_item = self.robot.inventory
+                # This can delete information from the robot's sensors...
+                drop_item.pos = np.copy(self.robot.pos)
+                self.items.append(drop_item)
+                self.robot.inventory = None
 
         self.robot.update(act)
         res = self.get_obs()
         return res
 
     def get_obs(self):
-        closest_dist, closest_item, item_index = self.get_closest_item(self.robot.pos)
+        pickup_dist, closest_pickup, closest_index = self.get_closest_pickup(self.robot.pos)
+        drop_dist, closest_drop = self.get_closest_drop(self.robot.pos, self.robot.inventory)
+
+        pickup_token = None
+        if pickup_dist < INTERACTION_DISTANCE:
+            obs = [0, 0, 1, -1]
+            if closest_index is None:   # HACK: handle containers
+                obs[2] = len(closest_pickup.items)
+                obs[3] = closest_pickup.capacity
+            pickup_token = (
+                np.eye(N_TYPES, dtype=np.bool)[CLOSE_PICKUP_ID],
+                zero_pad(obs, OBS_SIZE)
+            )
+        drop_token = None
+        if drop_dist < INTERACTION_DISTANCE:
+            obs = [0, 0, len(closest_drop.items), closest_drop.capacity]
+            drop_token = (
+                np.eye(N_TYPES, dtype=np.bool)[CLOSE_DROP_ID],
+                zero_pad(obs, OBS_SIZE)
+            )
 
         return {
             'robot': get_obs_token(self.robot),
@@ -243,7 +271,8 @@ class World2d:
             # NOTE: for now this will not work. The above tokens are
             # "ok" because they are all different types.
             #'closest': get_obs_token(closest_item)
-            'closest': closest_item
+            'pickup': pickup_token,
+            'drop': drop_token
         }
 
 
@@ -274,6 +303,19 @@ def tokenize_obs(obs, pad_to_size=None):
     for item_category, item_token in obs['items']:
         categories.append(item_category)
         tokens.append(item_token)
+    # 1 token for robot, 1 token for END
+    num_tokens = 2 + len(obs['containers']) + len(obs['items'])
+
+    if obs['pickup'] is not None:
+        cat, tok = obs['pickup']
+        categories.append(cat)
+        tokens.append(tok)
+        num_tokens += 1
+    if obs['drop'] is not None:
+        cat, tok = obs['drop']
+        categories.append(cat)
+        tokens.append(tok)
+        num_tokens += 1
 
     tokens.append(np.zeros(OBS_SIZE))
     categories.append(np.eye(N_TYPES, dtype=np.bool)[END_ID])
@@ -283,7 +325,7 @@ def tokenize_obs(obs, pad_to_size=None):
             tokens.append(np.zeros(OBS_SIZE))
 
     token_mask = np.zeros(MAX_TOKENS, dtype=np.bool)
-    token_mask[0:2 + len(obs['containers']) + len(obs['items'])] = 1
+    token_mask[0:num_tokens] = 1
     return (
         np.stack(tokens),
         np.stack(categories),

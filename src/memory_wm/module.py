@@ -318,11 +318,12 @@ class Predictor(nn.Module):
             token_mask,
             "d, b n -> b d n"
         )
+        token_count = einsum(token_mask, 'b n -> b')    # Row sum
         # lower right should be 1s whenever there is a nonzero mask token.
         # First column is all 1s, so that everyone can attend to the prior latent
         #attention_mask[:, :, 0] = 1
         x = self.obs_embedder(x, attention_mask)
-        return x[:, -1, :]  # Return last token embedding
+        return x[torch.arange(x.size(0)), token_count-1]  # Return last token embedding
         
 
     def predict_past(self, latent):
