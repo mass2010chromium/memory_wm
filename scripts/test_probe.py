@@ -19,7 +19,7 @@ from robot_utils import model_update, control_robot_to, gen_sample
 hidden_size = 192
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_memory_fix")
     data = torch.load(os.path.join(out_dir, "499.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()

@@ -5,7 +5,7 @@ import py_terminal_plotter as ptp
 
 plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, 1])
 plotter.create_axes(title="Embedding Laplacian")
-plotter.setup_image(100, 100, z_range=[0, 1])
+plotter.setup_image(100, 100, z_range=[0, 10])
 
 # Flip to r, c; and then flip to top left corner convention
 embeddings = einops.rearrange(np.load("embeddings.npy"), 'x y n -> y x n')[::-1]
@@ -17,7 +17,7 @@ for i in range(1, 99):
         gradients[i, j] = np.linalg.norm(laplacian)
 
 #slice_plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, np.max(gradients)])
-slice_plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, 1])
+slice_plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, 10])
 slice_plotter.create_axes(title="Embedding Laplacian")
 
 import sys, select, termios, time, tty

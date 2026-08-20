@@ -112,4 +112,11 @@ if __name__ == "__main__":
         pass
     t2 = time.time()
     print(t2 - t1, t1 - t0)
+    
+    # Add episode start key
+    ds2.keys.append('episode_start')
+    frame_is_start = ds2.data_map['frame_index'] == 0
+    ds2.data.append(frame_is_start)
+    ds2.data_map['episode_start'] = frame_is_start
+
     ds2.save("world2d_reorder")

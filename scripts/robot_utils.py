@@ -16,7 +16,8 @@ def model_update(model, latent, obs, action):
             torch.tensor(obs_categories).unsqueeze(0).cuda(),
             action.unsqueeze(0).cuda()
         )
-        return latents[:, 1, :]
+        return latents
+        #return latents[:, 0, :] # OL latent
         #return obs_emb # For JEPA only
 
 def control_robot_to(world: World2d, target, model, prev_obs, prev_latent, speed_factor=1, interaction=0):
@@ -33,11 +34,13 @@ def control_robot_to(world: World2d, target, model, prev_obs, prev_latent, speed
         action[2] = interaction
         interaction = 0
 
-        prev_latent = model_update(model, prev_latent, prev_obs, action)
-        latent_traj.append(prev_latent.detach().cpu())
+        obs = world.update(action)
+        latents = model_update(model, prev_latent, obs, action)
+        latent_traj.append(latents.detach().cpu())
 
-        prev_obs = world.update(action)
-        real_traj.append(prev_obs)
+        real_traj.append(obs)
+        prev_obs = obs
+        prev_latent = latents[:, 1, :]  # CL latent
     # Current obs, real trajectory, latent trajectory
     return prev_obs, real_traj, latent_traj
 

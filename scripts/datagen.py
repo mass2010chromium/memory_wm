@@ -12,7 +12,8 @@ from env_2d import (
 )
 
 INTERACTION_PROB = 0.5  # Per tick
-DROP_PROB = 0.01  # Per tick
+DROP_PROB = 0.04  # Per tick
+INVALID_PROB = 0.02  # Per tick
 
 features = {
     "observation.token_mask": {
@@ -73,6 +74,12 @@ def gen_trajectory_single(world: World2d, dataset: LeRobotDataset):
         if world.robot.inventory is not None:
             if np.random.random() < DROP_PROB * speed_multiple:
                 action[2] = -1.0
+
+        if np.random.random() < INVALID_PROB * speed_multiple:
+            if np.random.random() > 0.5:
+                action[2] = 1.0
+            else:
+                action[2] = -1.0
         obs = world.update(action)
         add_frame(obs, action)
         has_obs = True
@@ -123,6 +130,12 @@ def gen_trajectory_random_walk(world: World2d, dataset: LeRobotDataset):
                     action[2] = -1.0
             if world.robot.inventory is not None:
                 if np.random.random() < DROP_PROB * speed_multiple:
+                    action[2] = -1.0
+
+            if np.random.random() < INVALID_PROB * speed_multiple:
+                if np.random.random() > 0.5:
+                    action[2] = 1.0
+                else:
                     action[2] = -1.0
             obs = world.update(action)
             add_frame(obs, action)

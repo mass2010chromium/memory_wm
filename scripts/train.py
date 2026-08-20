@@ -35,6 +35,7 @@ with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
     config = json.load(jf)
 
 hidden_size = config['hidden_dim']
+obs_dim = config['obs_dim']
 def init_model(model_config):
     model = Predictor(**model_config).cuda()
 
@@ -42,7 +43,7 @@ def init_model(model_config):
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
 
     latent_cache = torch.empty((len(dataset), hidden_size))
-    observation_cache = torch.empty((len(dataset), hidden_size))
+    observation_cache = torch.empty((len(dataset), obs_dim))
     return model, optimizer, latent_cache, observation_cache
 
 def load_model(model_config, epoch):
@@ -57,10 +58,10 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().cuda()
-start_epoch = 450
-model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-#start_epoch = 0
-#model, optimizer, latent_cache, observation_cache = init_model(config)
+#start_epoch = 450
+#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+start_epoch = 0
+model, optimizer, latent_cache, observation_cache = init_model(config)
 
 all_actions = torch.tensor(dataset.data_map['action'])
 
@@ -68,11 +69,13 @@ num_epochs = 500
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
 scheduler.step(start_epoch)
 save_interval = 50
+
 use_temporal_straightening = True
+predict_past = False
 if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
-with wandb.init(name="mini-wm-past-predict-fix") as run:
+with wandb.init(name="mini-wm-bad-action") as run:
     for epoch in range(start_epoch, num_epochs):
         model.train()
         running_loss = 0.0
@@ -96,38 +99,46 @@ with wandb.init(name="mini-wm-past-predict-fix") as run:
             active_frames = data_batch['index']
             prior_latents = latent_cache[active_frames - 1].cuda()
             prior_latents[frame_index <= 0] = 0
+            for i, z in enumerate(frame_index):
+                if z == 0:
+                    prior_latents[i] = model.init_state(observation_cache[active_frames[i]].cuda())
+
 
             prior_latents_2 = latent_cache[active_frames - 2].cuda()
             prior_latents_2[frame_index <= 1] = 0
 
-            prior_latents_3 = latent_cache[active_frames - 3].cuda()
-            prior_obs_2 = observation_cache[active_frames - 2].cuda()
-            prior_action_2 = all_actions[active_frames - 2].cuda()
-            pred_prior_latents_2 = model.predict_latent(prior_latents_3, prior_obs_2, prior_action_2)[:, 1]
-
-            prior_latents_9 = latent_cache[active_frames - 9].cuda()
-            prior_obs_8 = observation_cache[active_frames - 8].cuda()
-            prior_action_8 = all_actions[active_frames - 8].cuda()
-            pred_prior_latents_8 = model.predict_latent(prior_latents_9, prior_obs_8, prior_action_8)[:, 1]
-
             actions = data_batch['action'].cuda()
 
-            obs_emb, latents, obs_reconstruct, past_predictions = model(
+            obs_emb, latents, obs_reconstruct = model(
                 prior_latents,
                 data_batch['observation.tokens'].cuda(),   # x
                 data_batch['observation.token_mask'].cuda(),
                 data_batch['observation.token_categories'].cuda(),
                 actions
             )
-            past_error = past_predictions[:, 0] - pred_prior_latents_2
-            past_error[frame_index <= 2] = 0
-            past_error_8 = past_predictions[:, 1] - pred_prior_latents_8
-            past_error_8[frame_index <= 8] = 0
-            past_loss_2 = past_error.pow(2).mean()
-            past_loss_8 = past_error_8.pow(2).mean()
-            past_loss = past_loss_2 + past_loss_8
-            cl_latents = latents[:, 1, :]
-            ol_latents = latents[:, 0, :]
+            if predict_past:
+                prior_latents_3 = latent_cache[active_frames - 3].cuda()
+                prior_obs_2 = observation_cache[active_frames - 2].cuda()
+                prior_action_2 = all_actions[active_frames - 2].cuda()
+                pred_prior_latents_2 = model.predict_latent(prior_latents_3, prior_obs_2, prior_action_2)[:, 1]
+
+                prior_latents_9 = latent_cache[active_frames - 9].cuda()
+                prior_obs_8 = observation_cache[active_frames - 8].cuda()
+                prior_action_8 = all_actions[active_frames - 8].cuda()
+                pred_prior_latents_8 = model.predict_latent(prior_latents_9, prior_obs_8, prior_action_8)[:, 1]
+
+                past_error = past_predictions[:, 0] - pred_prior_latents_2
+                past_error[frame_index <= 2] = 0
+                past_error_8 = past_predictions[:, 1] - pred_prior_latents_8
+                past_error_8[frame_index <= 8] = 0
+                past_loss_2 = past_error.pow(2).mean()
+                past_loss_8 = past_error_8.pow(2).mean()
+                past_loss = past_loss_2 + past_loss_8
+            else:
+                past_loss = 0
+
+            cl_latents = latents[:, -1, :]
+            ol_latents = latents[:, -2, :]
 
             # Open-loop closed-loop latent formulation
             pred_loss = (obs_emb - obs_reconstruct).pow(2).mean()
@@ -173,11 +184,12 @@ with wandb.init(name="mini-wm-past-predict-fix") as run:
 
             running_loss += loss.item() * B
             running_reconstruction_loss += pred_loss.item() * B
-            running_past_loss += past_loss.item() * B
-            running_past_loss_2 += past_loss_2.item() * B
-            running_past_loss_8 += past_loss_8.item() * B
             running_dynamics_loss += latent_pred_loss.item() * B
             running_sigreg_loss += sigreg_loss.item() * B
+            if predict_past:
+                running_past_loss += past_loss.item() * B
+                running_past_loss_2 += past_loss_2.item() * B
+                running_past_loss_8 += past_loss_8.item() * B
 
         scheduler.step(epoch+1)
 

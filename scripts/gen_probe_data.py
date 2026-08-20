@@ -13,7 +13,7 @@ from robot_utils import model_update, control_robot_to, gen_sample
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "499.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -40,10 +40,11 @@ if __name__ == "__main__":
         pos2 = world.containers[1].pos
 
         positions.append(pos1)
-        latents.append(latent1[-1].numpy())
+        # CL latent
+        latents.append(latent1[-1][:, 1, :].numpy())
 
         positions.append(pos2)
-        latents.append(latent2[-1].numpy())
+        latents.append(latent2[-1][:, 1, :].numpy())
 
     np.save("probe_positions.npy", np.stack(positions))
     np.save("probe_latents.npy", np.stack(latents))
@@ -57,10 +58,10 @@ if __name__ == "__main__":
         pos2 = world.containers[1].pos
 
         positions.append(pos1)
-        latents.append(latent1[-1].numpy())
+        latents.append(latent1[-1][:, 1, :].numpy())
 
         positions.append(pos2)
-        latents.append(latent2[-1].numpy())
+        latents.append(latent2[-1][:, 1, :].numpy())
 
     np.save("probe_positions_val.npy", np.stack(positions))
     np.save("probe_latents_val.npy", np.stack(latents))
