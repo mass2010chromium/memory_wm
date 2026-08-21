@@ -18,12 +18,14 @@ if len(sys.argv) > 1:
 else:
     ROOT_DIR = SCRIPT_DIR
 
-positions = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions.npy"))).cuda()
-latents = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents.npy"))), "b 1 n -> b n").cuda()
-positions_val = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions_val.npy"))).cuda()
-latents_val = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents_val.npy"))), "b 1 n -> b n").cuda()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-model = MLPProbe().cuda()
+positions = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions.npy")), device=device)
+latents = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents.npy")), device=device), "b 1 n -> b n")
+positions_val = torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_positions_val.npy")), device=device)
+latents_val = rearrange(torch.tensor(np.load(os.path.join(ROOT_DIR, "probe_latents_val.npy")), device=device), "b 1 n -> b n")
+
+model = MLPProbe(in_dim=64, hidden_dim=128).to(device)
 
 def get_accuracy(pred_positions, actual_positions):
     pos_pairs = rearrange(actual_positions, "(b n) d -> n b d", n=2)
@@ -54,8 +56,8 @@ def get_loss_contrastive(pred_positions, actual_positions):
     return -dots.mean() + distance.mean()
     
 
-n_epochs = 1000
-optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+n_epochs = 10000
+optimizer = optim.AdamW(model.parameters(), lr=1e-4)
 #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 
 best_val_acc = 0
@@ -74,6 +76,7 @@ for epoch in tqdm.trange(1, n_epochs + 1):
     loss.backward()             # backprop
     optimizer.step()            # update weights
     #scheduler.step()
+    train_accuracy = get_accuracy(pred_positions, positions)
 
     running_loss = loss.item()
  
@@ -92,7 +95,7 @@ for epoch in tqdm.trange(1, n_epochs + 1):
             best_val_iter = epoch
             torch.save(model.state_dict(), os.path.join(ROOT_DIR, "best.pth"))
     if epoch % 100 == 0:
-        print(f"Epoch {epoch:2d} | train err: {train_loss:.4f} | val err: {val_error} | val acc: {val_accuracy}")
+        print(f"Epoch {epoch:2d} | train err: {train_loss:.4f} | train acc: {train_accuracy} | val err: {val_error} | val acc: {val_accuracy}")
 
 
 print(f"Best: epoch {best_val_iter} acc {best_val_acc} err {best_val_err}")

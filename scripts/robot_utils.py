@@ -9,7 +9,7 @@ hidden_size = 32
 def model_update(model, latent, obs, action):
     obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
     with torch.no_grad():
-        obs_emb, latents, obs_reconstruct, past_predictions = model(
+        obs_emb, latents, obs_reconstruct = model(
             latent.cuda(),
             torch.tensor(obs_tokens).float().unsqueeze(0).cuda(),
             torch.tensor(token_mask).unsqueeze(0).cuda(),
@@ -49,12 +49,19 @@ def gen_sample(world: World2d, model, seed=0, container=0):
 
     obs = world.reset()
 
+    obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
+    init_obs_embed = model.embed_obs(
+        torch.tensor(obs_tokens).float().unsqueeze(0).cuda(),
+        torch.tensor(token_mask).unsqueeze(0).cuda(),
+        torch.tensor(obs_categories).unsqueeze(0).cuda()
+    )
+
     init_pos = np.copy(world.robot.pos)
     target_pos1 = world.items[0].pos
     target_pos2 = world.containers[container].pos
     target_pos3 = (world.containers[0].pos + world.containers[1].pos) / 2
 
-    prev_latent = torch.zeros((1, hidden_size))
+    prev_latent = model.init_state(init_obs_embed[0]).unsqueeze(0)
     obs, real_traj1, latent_traj1 = control_robot_to(world, target_pos1, model, obs, prev_latent, interaction=0)
     obs, real_traj2, latent_traj2 = control_robot_to(world, target_pos2, model, obs, prev_latent, interaction=1)
     obs, real_traj3, latent_traj3 = control_robot_to(world, target_pos3, model, obs, prev_latent, interaction=-1)

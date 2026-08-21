@@ -19,8 +19,8 @@ from robot_utils import model_update, control_robot_to, gen_sample
 hidden_size = 192
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_memory_fix")
-    data = torch.load(os.path.join(out_dir, "499.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -28,7 +28,7 @@ def load_model(model_config):
     return model
 
 if __name__ == "__main__":
-    probe = MLPProbe()
+    probe = MLPProbe(in_dim=64, hidden_dim=128)
     probe.load_state_dict(torch.load(os.path.join(SCRIPT_DIR, "probe.pth")))
     probe.cuda()
 
@@ -50,11 +50,11 @@ if __name__ == "__main__":
     os.makedirs(image_out_dir, exist_ok=True)
     successes = 0
     fails = 0
-    for i in tqdm.trange(10000, 10100):
+    for i in tqdm.trange(10000, 10010):
         obs1, real1, latent1 = gen_sample(world, model, seed=i, container=0)
         canvas = world.render(resolution=512, draw_items=True, bounds=[min_bounds, max_bounds])
         with torch.no_grad():
-            p0 = probe(latent1[-1].cuda()).squeeze().cpu().numpy()
+            p0 = probe(latent1[-1].cuda()).squeeze().cpu().numpy()[0]
             fake_item.pos = p0
         fake_item.render(canvas, min_bounds, max_bounds)
         mediapy.write_image(os.path.join(image_out_dir, f"{i}_0.png"), canvas)
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         obs2, real2, latent2 = gen_sample(world, model, seed=i, container=1)
         canvas = world.render(resolution=512, draw_items=True, bounds=[min_bounds, max_bounds])
         with torch.no_grad():
-            p1 = probe(latent2[-1].cuda()).squeeze().cpu().numpy()
+            p1 = probe(latent2[-1].cuda()).squeeze().cpu().numpy()[0]
             fake_item.pos = p1
         fake_item.render(canvas, min_bounds, max_bounds)
         mediapy.write_image(os.path.join(image_out_dir, f"{i}_1.png"), canvas)

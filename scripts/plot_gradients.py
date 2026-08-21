@@ -1,14 +1,28 @@
+import os
+
 import einops
 import numpy as np
+import torch
 
 import py_terminal_plotter as ptp
 
 plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, 1])
 plotter.create_axes(title="Embedding Laplacian")
-plotter.setup_image(100, 100, z_range=[0, 10])
+plotter.setup_image(100, 100, z_range=[0, 2])
 
 # Flip to r, c; and then flip to top left corner convention
 embeddings = einops.rearrange(np.load("embeddings.npy"), 'x y n -> y x n')[::-1]
+
+plot_probe = True
+if plot_probe:
+    try:
+        from probe_network import MLPProbe
+        probe = MLPProbe()
+        probe.load_state_dict(torch.load("best.pth"))
+        probe = probe.cuda()
+    except:
+        plot_probe = False
+
 
 gradients = np.zeros(embeddings.shape[:2])
 for i in range(1, 99):
@@ -41,7 +55,14 @@ def render(px, py):
     y = py / 99
     display = np.copy(gradients)
     display[py, px] = 100
-    plotter.set_title(f"Embedding Laplacian ({x:.3f}, {y:.3f}) |L|={gradients[py, px]:.5f}")
+    title = f"Embedding Laplacian ({x:.3f}, {1-y:.3f}) |L|={gradients[py, px]:.5f}"
+    if plot_probe:
+        with torch.no_grad():
+            v = torch.tensor(embeddings[py, px], dtype=torch.float32).unsqueeze(0).cuda()
+            probe_res = probe(v).cpu()[0]
+        probe_x, probe_y = probe_res
+        title += f" probe ({probe_x:.3f}, {probe_y:.3f})"
+    plotter.set_title(title)
     plotter.plot_image_section(display, start_row=0)
     plotter.draw()
 
@@ -49,7 +70,7 @@ def render_x_slice(py):
     xs = np.linspace(0, 1, 100)
     ys = gradients[py, :]
     y = py / 99
-    slice_plotter.set_title(f"Embedding Laplacian X-slice (Y={y:.3f})")
+    slice_plotter.set_title(f"Embedding Laplacian X-slice (Y={1-y:.3f})")
     slice_plotter.clear_plot_area()
     slice_plotter.max_binned_plot(xs, ys)
     slice_plotter.draw()

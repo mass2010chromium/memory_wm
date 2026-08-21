@@ -58,10 +58,10 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().cuda()
-#start_epoch = 450
-#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-start_epoch = 0
-model, optimizer, latent_cache, observation_cache = init_model(config)
+start_epoch = 200
+model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+#start_epoch = 0
+#model, optimizer, latent_cache, observation_cache = init_model(config)
 
 all_actions = torch.tensor(dataset.data_map['action'])
 
@@ -148,7 +148,7 @@ with wandb.init(name="mini-wm-bad-action") as run:
             sigreg_loss = sigreg(obs_emb) + sigreg(cl_latents)
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
-            loss = pred_loss + latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
+            loss = 10*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
             # Ablation: No past loss version, only sigreg and reconstruction
             # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
             # Ablation: No reconstruction loss version, only sigreg
@@ -167,7 +167,7 @@ with wandb.init(name="mini-wm-bad-action") as run:
                 prev_velocity = prior_latents - prior_latents_2
                 # Negative: We want it to be high (straight)
                 straightness_loss = straightness_measure(velocity, prev_velocity).mean()
-                loss -= straightness_loss * 5
+                loss -= straightness_loss * 0.25
                 running_curvature_loss += straightness_loss.item() * B
 
             outputs = outputs.detach().cpu()

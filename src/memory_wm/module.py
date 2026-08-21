@@ -292,7 +292,6 @@ class Predictor(nn.Module):
         #self.empty_state = nn.Parameter(torch.randn(input_dim))
 
         self.obs_proj = nn.Linear(input_dim, obs_dim)
-        self.action_proj = nn.Linear(action_dim, hidden_dim)
 
         self.obs_embedder = Transformer(
             obs_dim,
@@ -312,7 +311,7 @@ class Predictor(nn.Module):
             dim_head,
             mlp_dim,
             dropout,
-            block_class=Block,
+            block_class=ConditionalBlock,
         )
         self.reconstruction = MLP(
             hidden_dim,
@@ -352,12 +351,11 @@ class Predictor(nn.Module):
         full_obs_token = torch.zeros(B, 1, D, dtype=prior_latents.dtype, device=prior_latents.device)
         full_obs_token[:, :, :obs_token.shape[-1]] = obs_token
 
-        action_token = rearrange(self.action_proj(action), "b d -> b 1 d")
-        history_and_obs = torch.cat((prior_latents, action_token, full_obs_token), 1)
+        history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
-        return self.dynamics(history_and_obs, mask=None)
+        return self.dynamics(history_and_obs, mask=None, c=c)
 
 
     def embed_obs(self, x, token_mask, categories_onehot):

@@ -8,12 +8,12 @@ import tqdm
 
 from memory_wm.module import Predictor
 
-from env_2d import N_TYPES, OBS_SIZE, World2d, MAX_TOKENS
+from env_2d import N_TYPES, OBS_SIZE, World2d
 from robot_utils import model_update, control_robot_to, gen_sample
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
