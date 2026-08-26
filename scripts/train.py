@@ -22,7 +22,7 @@ from env_2d_dataset import World2dDataset, SmallPackedDataset
 # Reproducibility
 torch.manual_seed(42)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
@@ -47,7 +47,7 @@ def init_model(model_config):
     return model, optimizer, latent_cache, observation_cache
 
 def load_model(model_config, epoch):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
     data = torch.load(os.path.join(out_dir, f"{epoch}.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
@@ -148,7 +148,7 @@ with wandb.init(name="mini-wm-bad-action") as run:
             sigreg_loss = sigreg(obs_emb) + sigreg(cl_latents)
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
-            loss = 10*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
+            loss = 5*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.18 * sigreg_loss
             # Ablation: No past loss version, only sigreg and reconstruction
             # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
             # Ablation: No reconstruction loss version, only sigreg

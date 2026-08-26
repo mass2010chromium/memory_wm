@@ -14,8 +14,8 @@ from robot_utils import model_update, control_robot_to, gen_sample
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True, map_location=device)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
+    data = torch.load(os.path.join(out_dir, "299.pth"), weights_only=True, map_location=device)
 
     model = Predictor(**model_config).to(device)
     model.load_state_dict(data['model_state'])

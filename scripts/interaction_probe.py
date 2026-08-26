@@ -21,6 +21,10 @@ if embedding_seed is None:
 else:
     embeddings = np.load(f"embeddings/{embedding_seed}/embeddings.npy")
     interactions = np.load(f"embeddings/{embedding_seed}/interactions.npy")
+    #embeddings2 = np.load(f"embeddings/{45}/embeddings.npy")
+    #interactions2 = np.load(f"embeddings/{45}/interactions.npy")
+    #embeddings = np.stack((embeddings, embeddings2), axis=0)
+    #interactions = np.stack((interactions, interactions2), axis=0)
 pickup = (interactions & 1) > 0
 drop = (interactions & 2) > 0
 
@@ -34,7 +38,7 @@ def train_probe(embeddings, interactions):
     supervision = torch.tensor(np.stack([pickup, drop], axis=-1).reshape(-1, 2), dtype=torch.float32).cuda()
     neg_supervision = 1.0 - supervision
 
-    n_epochs = 10000
+    n_epochs = 1000
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 
@@ -48,7 +52,12 @@ def train_probe(embeddings, interactions):
 
         optimizer.zero_grad()       # clear gradients from previous step
         logits = model(data)        # forward pass, output is log-likelihood
-        loss = -torch.sum(supervision * pred_state + neg_supervision * neg_state)
+        pickup_pred = torch.nn.functional.softmax(logits[:, :2], dim=-1)
+        drop_pred = torch.nn.functional.softmax(logits[:, 2:], dim=-1)
+        pred_state = torch.stack([pickup_pred[:, 0], drop_pred[:, 0]], dim=1)
+        neg_state = 1.0 - pred_state
+        eps = 1e-6
+        loss = -torch.sum(supervision * torch.log(pred_state + eps) + neg_supervision * torch.log(neg_state + eps))
         loss.backward()             # backprop
         optimizer.step()            # update weights
         #scheduler.step()
@@ -63,49 +72,48 @@ def train_probe(embeddings, interactions):
                 best_val_err = running_loss 
                 best_val_acc = acc
                 best_val_iter = epoch
-                torch.save(model.state_dict(), os.path.join(ROOT_DIR, "best_interaction.pth"))
+                torch.save(model.state_dict(), os.path.join(ROOT_DIR, "embeddings", str(embedding_seed), "best_interaction.pth"))
 
         if epoch % 100 == 0:
             print(f"Epoch {epoch:2d} | train err: {running_loss:.4f} val acc: {best_val_acc}")
 
 
     print(f"Best: epoch {best_val_iter} err {best_val_err} acc {best_val_acc}")
-    torch.save(model.state_dict(), os.path.join(ROOT_DIR, "probe_interaction.pth"))
+    torch.save(model.state_dict(), os.path.join(ROOT_DIR, "embeddings", str(embedding_seed), "probe_interaction.pth"))
+    return model
 
-train_probe(embeddings, interactions)
+model = train_probe(embeddings, interactions)
 
-pickups = embeddings[pickup]
-not_pickups = embeddings[np.logical_not(pickup)]
-drops = embeddings[drop]
-not_drops = embeddings[np.logical_not(drop)]
+def test_probe(model, embeddings, interactions):
+    pickup = (interactions & 1) > 0
+    drop = (interactions & 2) > 0
+    supervision = torch.tensor(np.stack([pickup, drop], axis=-1).reshape(-1, 2), dtype=torch.float32).cuda()
 
-def linear_classifier(positives, negatives, direction=None):
-    if direction is None:
-        direction = positives.mean(axis=0) - negatives.mean(axis=0)
-        direction /= np.linalg.norm(direction)
+    data = torch.tensor(embeddings.reshape((-1, embeddings.shape[-1])), dtype=torch.float32).cuda()
+    model.eval()
+    with torch.no_grad():
+        logits = model(data)        # forward pass, output is log-likelihood
+        pickup_pred = torch.nn.functional.softmax(logits[:, :2], dim=-1)
+        drop_pred = torch.nn.functional.softmax(logits[:, 2:], dim=-1)
+        pred_state = torch.stack([pickup_pred[:, 0], drop_pred[:, 0]], dim=1)
+        bin_pred_state = (pred_state > 0.5).float() # Binarize
 
-    positives = einsum(positives, direction, 'n x, x -> n')
-    negatives = einsum(negatives, direction, 'n x, x -> n')
-    true_positive = np.sum(positives > 0)
-    true_negative = np.sum(negatives < 0)
-    print(f"True positives: {true_positive}/{len(positives)} ({true_positive / len(positives):.5f})")
-    print(f"True negatives: {true_negative}/{len(negatives)} ({true_negative / len(negatives):.5f})")
-    return direction
+        positives = bin_pred_state * supervision
+        negatives = (1 - bin_pred_state) * (1 - supervision)
 
-load_seed = None
+        true_positive = positives.sum()
+        total_positive = supervision.sum()
+        true_negative = negatives.sum()
+        total_negative = (1 - supervision).sum()
+        print(f"True positives: {true_positive}/{total_positive} ({true_positive / total_positive:.5f})")
+        print(f"True negatives: {true_negative}/{total_negative} ({true_negative / total_negative:.5f})")
+
+load_seed = 43
 if load_seed is None:
-    pickup_vec = None
-    drop_vec = None
+    pass
 else:
-    pickup_vec = np.load(f"embeddings/{load_seed}/pickup_vec.npy")
-    drop_vec = np.load(f"embeddings/{load_seed}/drop_vec.npy")
+    val_embeddings = np.load(f"embeddings/{load_seed}/embeddings.npy")
+    val_interactions = np.load(f"embeddings/{load_seed}/interactions.npy")
 
 print(f"Embedding seed={embedding_seed}, Load seed={load_seed}")
-print("Pickup available classifier:")
-pickup_vec = linear_classifier(pickups, not_pickups, direction=pickup_vec)
-print("Drop available classifier:")
-drop_vec = linear_classifier(drops, not_drops, direction=drop_vec)
-
-if load_seed is None:
-    np.save(f"embeddings/{embedding_seed}/pickup_vec.npy", pickup_vec)
-    np.save(f"embeddings/{embedding_seed}/drop_vec.npy", drop_vec)
+test_probe(model, val_embeddings, val_interactions)

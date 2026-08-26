@@ -17,7 +17,7 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
     data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
