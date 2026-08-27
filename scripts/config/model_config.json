@@ -1,0 +1,11 @@
+{
+  "obs_dim": 32,
+  "hidden_dim": 64,
+  "action_dim": 3,
+  "input_dim": 4,
+  "categories": 7,
+  "depth": 6,
+  "heads": 4,
+  "dim_head": 16,
+  "mlp_dim": 32
+}
