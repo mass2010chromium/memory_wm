@@ -38,7 +38,7 @@ def train_probe(embeddings, interactions):
     supervision = torch.tensor(np.stack([pickup, drop], axis=-1).reshape(-1, 2), dtype=torch.float32).cuda()
     neg_supervision = 1.0 - supervision
 
-    n_epochs = 1000
+    n_epochs = 500
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 
@@ -68,7 +68,7 @@ def train_probe(embeddings, interactions):
         with torch.no_grad():
             bin_pred_state = (pred_state > 0.5).float() # Binarize
             acc = (bin_pred_state * supervision + (1 - bin_pred_state) * neg_supervision).sum() / (bin_pred_state.shape[0] * 2)
-            if acc > best_val_acc:
+            if acc > best_val_acc or (acc == best_val_acc and running_loss < best_val_err):
                 best_val_err = running_loss 
                 best_val_acc = acc
                 best_val_iter = epoch

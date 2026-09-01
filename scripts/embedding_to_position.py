@@ -19,17 +19,18 @@ def train_probe(embeddings, val_embeddings):
     model = MLPProbe(out_dim=2).cuda()
 
     data = torch.tensor(embeddings.reshape((-1, embeddings.shape[-1])), dtype=torch.float32).cuda()
-    val_data = torch.tensor(embeddings.reshape((-1, val_embeddings.shape[-1])), dtype=torch.float32).cuda()
+    val_data = torch.tensor(val_embeddings.reshape((-1, val_embeddings.shape[-1])), dtype=torch.float32).cuda()
 
     gt = []
-    for xpos in np.linspace(0, 1, 100):
-        for ypos in np.linspace(0, 1, 100):
-            gt.append([xpos, ypos])
+    while len(gt) < len(data):
+        for xpos in np.linspace(0, 1, 100):
+            for ypos in np.linspace(0, 1, 100):
+                gt.append([xpos, ypos])
     gt = torch.tensor(gt, dtype=torch.float32).cuda()
 
     n_epochs = 10000
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3)
-    #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-2)
+    scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 
     best_val_err = np.inf
     best_val_iter = 0
@@ -50,7 +51,7 @@ def train_probe(embeddings, val_embeddings):
         model.eval()
         with torch.no_grad():
             pred_positions = model(val_data)
-            val_err = (pred_positions - gt).pow(2).mean()
+            val_err = (pred_positions - gt[:len(pred_positions)]).pow(2).mean()
             if val_err < best_val_err:
                 best_val_err = val_err
                 best_val_iter = epoch
@@ -68,7 +69,20 @@ if __name__ == "__main__":
     if train_seed is None:
         train_embeddings = np.load("embeddings.npy")
     else:
-        train_embeddings = np.load(f"embeddings/{train_seed}/embeddings.npy")
+        train_embeddings = np.concat(
+            (
+                np.load(f"embeddings/{train_seed}/embeddings.npy"),
+                #np.load(f"embeddings/43/embeddings.npy"),
+                #np.load(f"embeddings/44/embeddings.npy"),
+                #np.load(f"embeddings/45/embeddings.npy"),
+                #np.load(f"embeddings/46/embeddings.npy"),
+                #np.load(f"embeddings/47/embeddings.npy"),
+                #np.load(f"embeddings/48/embeddings.npy"),
+                #np.load(f"embeddings/100/embeddings.npy"),
+                #np.load(f"embeddings/1/embeddings.npy")
+            ),
+            axis=0
+        )
     val_seed = 43
     if val_seed is None:
         val_embeddings = np.load("embeddings.npy")

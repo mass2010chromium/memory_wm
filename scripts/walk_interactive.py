@@ -17,8 +17,8 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
-    data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    data = torch.load(os.path.join(out_dir, "114.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -27,6 +27,8 @@ def load_model(model_config):
 
 with open(os.path.join(SCRIPT_DIR, "world.json"), "r") as jf:
     data = json.load(jf)
+seed = 42
+np.random.seed(seed)
 world = World2d(data)
 world.reset()
 
@@ -71,6 +73,11 @@ def getKey():
     return key
 _settings = termios.tcgetattr(sys.stdin)
 
+from probe_network import MLPProbe
+probe = MLPProbe()
+probe.load_state_dict(torch.load("probe.pth"))
+probe = probe.cuda()
+
 def simplify_obs(obs):
     res = "r" + 'c'*len(obs['containers']) + 'i'*len(obs['items'])
     if obs['pickup'] is not None:
@@ -86,10 +93,18 @@ def render(action):
     obs_emb, latents, obs_reconstruct = model_update(prior_latent, obs_new, action)
 
     obs_err = (obs_emb - obs_reconstruct).pow(2).mean()
-    prior_latent = latents[-1]
+    prior_latent = model.init_state(obs_emb.cuda())#latents[-1]
     obs_simplify = simplify_obs(obs_new)
     a = action.tolist()
-    plotter.set_title(f"Interactive world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}], obs_err: {obs_err:.3f})")
+    obs_mag = torch.norm(obs_emb)
+
+    with torch.no_grad():
+        v = obs_reconstruct.unsqueeze(0).cuda()
+        probe_res = probe(v).cpu()[0]
+    probe_x, probe_y = probe_res
+    title = f"Interactive world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}], obs_err: {obs_err:.3f} obs_mag: {obs_mag:.3f}"
+    title += f" probe ({probe_x:.3f}, {probe_y:.3f})"
+    plotter.set_title(title)
 
     display = world.render()
     display = 255 - np.mean(display, axis=-1)
@@ -111,6 +126,8 @@ try:
             render([0.0, 0.0, 1.0])
         if key == 'c':
             render([0.0, 0.0, -1.0])
+        if key == ' ':
+            render([0.0, 0.0, 0.0])
         if key == 'q':
             break
         time.sleep(0.05)

@@ -133,7 +133,7 @@ class Attention(nn.Module):
         qkv = self.to_qkv(x).chunk(3, dim=-1)  # q, k, v: (B, heads, T, dim_head)
         q, k, v = (rearrange(t, "b t (h d) -> b h t d", h=self.heads) for t in qkv)
         q = self.rope(q)
-        k = self.rope(q)
+        k = self.rope(k)
         if attn_mask is not None:
             attn_mask = rearrange(attn_mask, "b x y -> b 1 x y")    # Account for attention heads
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=drop, attn_mask=attn_mask, is_causal=causal)
@@ -248,24 +248,37 @@ class MLP(nn.Module):
     ):
         super().__init__()
         norm_fn = norm_fn(hidden_dim) if norm_fn is not None else nn.Identity()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            norm_fn,
-            act_fn(),
-            nn.Linear(hidden_dim, hidden_dim),
-            norm_fn,
-            act_fn(),
-            nn.Linear(hidden_dim, hidden_dim),
-            norm_fn,
-            act_fn(),
-            nn.Linear(hidden_dim, output_dim or input_dim),
-        )
+        self.in_proj = nn.Linear(input_dim, hidden_dim)
+        self.h1 = nn.Linear(hidden_dim, hidden_dim)
+        #self.h2 = nn.Linear(hidden_dim, hidden_dim)
+        #self.h3 = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, output_dim)
+        self.in_dim = input_dim
+        self.out_dim = output_dim
+        # self.net = nn.Sequential(
+        #     nn.Linear(input_dim, hidden_dim),
+        #     norm_fn,
+        #     act_fn(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     norm_fn,
+        #     act_fn(),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     norm_fn,
+        #     act_fn(),
+        #     nn.Linear(hidden_dim, output_dim or input_dim),
+        # )
 
-    def forward(self, x):
+    def forward(self, _x):
         """
-        x: (B*T, D)
+        x: (B, D)
         """
-        return self.net(x)
+        # return self.net(_x)
+        x = self.in_proj(_x)
+        x[..., :self.in_dim] += _x
+        x = self.h1(x) + x
+        #x = self.h2(x) + x
+        #x = self.h3(x) + x
+        return x[..., :self.out_dim] + self.out_proj(x)
 
 
 class Predictor(nn.Module):
@@ -290,6 +303,7 @@ class Predictor(nn.Module):
         self.cat_embedding = nn.Parameter(torch.randn(obs_dim, categories))
         #self.dropout = nn.Dropout(emb_dropout)
         #self.empty_state = nn.Parameter(torch.randn(input_dim))
+        self.query_tokens = nn.Parameter(torch.randn(2, hidden_dim))
 
         self.obs_proj = nn.Linear(input_dim, obs_dim)
 
@@ -338,6 +352,7 @@ class Predictor(nn.Module):
 
         latents = self.predict_latent(prior_latents, obs_embedding, c)
 
+        # Action conditioned, but not next-observation conditioned.
         obs_reconstruct = self.reconstruction(latents[:, 0, :])
         return obs_embedding, latents, obs_reconstruct
 
@@ -351,11 +366,16 @@ class Predictor(nn.Module):
         full_obs_token = torch.zeros(B, 1, D, dtype=prior_latents.dtype, device=prior_latents.device)
         full_obs_token[:, :, :obs_token.shape[-1]] = obs_token
 
-        history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
+        q0 = self.query_tokens[0].expand(B, 1, D)
+        q1 = self.query_tokens[1].expand(B, 1, D)
+
+        history_and_obs = torch.cat((prior_latents, q0, full_obs_token, q1), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
-        return self.dynamics(history_and_obs, mask=None, c=c)
+        output = self.dynamics(history_and_obs, mask=None, c=c)
+        # Get results of query tokens only.
+        return output[:, [1, 3], ...]
 
 
     def embed_obs(self, x, token_mask, categories_onehot):

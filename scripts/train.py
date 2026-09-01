@@ -22,12 +22,13 @@ from env_2d_dataset import World2dDataset, SmallPackedDataset
 # Reproducibility
 torch.manual_seed(42)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
+#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -47,7 +48,7 @@ def init_model(model_config):
     return model, optimizer, latent_cache, observation_cache
 
 def load_model(model_config, epoch):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
     data = torch.load(os.path.join(out_dir, f"{epoch}.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
@@ -58,24 +59,27 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().cuda()
-start_epoch = 200
-model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-#start_epoch = 0
-#model, optimizer, latent_cache, observation_cache = init_model(config)
+#start_epoch = 25
+#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+start_epoch = 0
+model, optimizer, latent_cache, observation_cache = init_model(config)
+obs_freeze_epoch = -1
 
 all_actions = torch.tensor(dataset.data_map['action'])
 
 num_epochs = 500
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
 scheduler.step(start_epoch)
-save_interval = 50
+save_interval = 5
 
 use_temporal_straightening = True
 predict_past = False
 if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
-with wandb.init(name="mini-wm-bad-action") as run:
+#run = None
+with wandb.init(name="mini-wm-no-state") as run:
+#if True:
     for epoch in range(start_epoch, num_epochs):
         model.train()
         running_loss = 0.0
@@ -87,35 +91,53 @@ with wandb.init(name="mini-wm-bad-action") as run:
         running_sigreg_loss = 0.0
         running_curvature_loss = 0.0
 
-        for data_batch in tqdm.tqdm(dataloader):
+        for batch_idx, data_batch in enumerate(tqdm.tqdm(dataloader)):
             optimizer.zero_grad()          # clear gradients
             B = len(data_batch['frame_index'])
             frame_index = data_batch['frame_index']
-            prior_latents = torch.zeros((B, hidden_size), dtype=torch.float32)
+            #prior_latents = torch.zeros((B, hidden_size), dtype=torch.float32)
 
-            if use_temporal_straightening:
-                prior_latents_2 = torch.zeros((B, hidden_size), dtype=torch.float32)
+            #if use_temporal_straightening:
+            #    prior_latents_2 = torch.zeros((B, hidden_size), dtype=torch.float32)
 
             active_frames = data_batch['index']
-            prior_latents = latent_cache[active_frames - 1].cuda()
+            #prior_latents = latent_cache[active_frames - 1].cuda()
+            #prior_latents[frame_index <= 0] = 0
+            # Problem: first frame badness.
+            # Solution: Mask out first frame
+            prior_latents = model.init_state(observation_cache[active_frames-1].cuda())
             prior_latents[frame_index <= 0] = 0
-            for i, z in enumerate(frame_index):
-                if z == 0:
-                    prior_latents[i] = model.init_state(observation_cache[active_frames[i]].cuda())
-
 
             prior_latents_2 = latent_cache[active_frames - 2].cuda()
             prior_latents_2[frame_index <= 1] = 0
 
             actions = data_batch['action'].cuda()
 
-            obs_emb, latents, obs_reconstruct = model(
-                prior_latents,
-                data_batch['observation.tokens'].cuda(),   # x
-                data_batch['observation.token_mask'].cuda(),
-                data_batch['observation.token_categories'].cuda(),
-                actions
-            )
+            if obs_freeze_epoch < 0 or epoch < obs_freeze_epoch:
+                obs_emb, latents, obs_reconstruct = model(
+                    prior_latents,
+                    data_batch['observation.tokens'].cuda(),   # x
+                    data_batch['observation.token_mask'].cuda(),
+                    data_batch['observation.token_categories'].cuda(),
+                    actions
+                )
+            elif epoch == obs_freeze_epoch:
+                # NOTE: Grad is stopped globally in this iteration.
+                obs_emb = model.embed_obs(
+                    data_batch['observation.tokens'].cuda(),   # x
+                    data_batch['observation.token_mask'].cuda(),
+                    data_batch['observation.token_categories'].cuda(),
+                )
+                latents = model.predict_latent(prior_latents, obs_emb, actions)
+                # Action conditioned, but not next-observation conditioned.
+                obs_reconstruct = model.reconstruction(latents[:, 0, :])
+            else:
+                # No need to recompute observations, even
+                obs_emb = observation_cache[active_frames].cuda()
+                latents = model.predict_latent(prior_latents, obs_emb, actions)
+                # Action conditioned, but not next-observation conditioned.
+                obs_reconstruct = model.reconstruction(latents[:, 0, :])
+
             if predict_past:
                 prior_latents_3 = latent_cache[active_frames - 3].cuda()
                 prior_obs_2 = observation_cache[active_frames - 2].cuda()
@@ -141,14 +163,22 @@ with wandb.init(name="mini-wm-bad-action") as run:
             ol_latents = latents[:, -2, :]
 
             # Open-loop closed-loop latent formulation
-            pred_loss = (obs_emb - obs_reconstruct).pow(2).mean()
+            pred_err = obs_emb - obs_reconstruct
+            pred_err[frame_index <= 0] = 0
+            pred_loss = pred_err.abs().mean()#pow(2).mean()
             latent_err = ol_latents - cl_latents
             latent_err[frame_index <= 0] = 0
-            latent_pred_loss = latent_err.pow(2).mean()
-            sigreg_loss = sigreg(obs_emb) + sigreg(cl_latents)
+            latent_pred_loss = latent_err.abs().mean()#pow(2).mean()
+
+            # SIGReg is needed on velocities to ensure the distribution doesn't collapse to uniform+discrete
+            # This might be huge... ask Devesh
+            velocity = cl_latents - prior_latents
+
+            sigreg_loss = sigreg(obs_emb) + sigreg(cl_latents) + sigreg(10*velocity)
+
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
-            loss = 5*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.18 * sigreg_loss
+            loss = 2*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
             # Ablation: No past loss version, only sigreg and reconstruction
             # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
             # Ablation: No reconstruction loss version, only sigreg
@@ -163,11 +193,10 @@ with wandb.init(name="mini-wm-bad-action") as run:
             #outputs = obs_emb
 
             if use_temporal_straightening:
-                velocity = outputs - prior_latents
                 prev_velocity = prior_latents - prior_latents_2
                 # Negative: We want it to be high (straight)
                 straightness_loss = straightness_measure(velocity, prev_velocity).mean()
-                loss -= straightness_loss * 0.25
+                loss -= straightness_loss
                 running_curvature_loss += straightness_loss.item() * B
 
             outputs = outputs.detach().cpu()
@@ -179,8 +208,11 @@ with wandb.init(name="mini-wm-bad-action") as run:
                 latent_cache[active_frames] = latent_cache[active_frames] * 0.9 + outputs * 0.1
                 observation_cache[active_frames] = observation_cache[active_frames] * 0.9 + obs_emb * 0.1
 
-            loss.backward()                # backprop
-            optimizer.step()               # update weights
+            if epoch == obs_freeze_epoch:
+                observation_cache[active_frames] = obs_emb
+            else:
+                loss.backward()                # backprop
+                optimizer.step()               # update weights
 
             running_loss += loss.item() * B
             running_reconstruction_loss += pred_loss.item() * B
@@ -202,17 +234,24 @@ with wandb.init(name="mini-wm-bad-action") as run:
         epoch_sigreg_loss = running_sigreg_loss / len(dataset)
         epoch_curvature_loss = running_curvature_loss / len(dataset)
         latents_norm = torch.norm(latent_cache, dim=1).mean()
-        run.log({
-            "loss": epoch_loss,
-            "obs_loss": epoch_reconstruction_loss,
-            "pred_loss": epoch_dynamics_loss,
-            "past_loss": epoch_past_loss,
-            "past_loss_2": epoch_past_loss_2,
-            "past_loss_8": epoch_past_loss_8,
-            "sigreg_loss": epoch_sigreg_loss,
-            "curvature_loss": epoch_curvature_loss,
-            "latent_norm": latents_norm,
-        })
+        if run:
+            run.log({
+                "loss": epoch_loss,
+                "obs_loss": epoch_reconstruction_loss,
+                "pred_loss": epoch_dynamics_loss,
+                "past_loss": epoch_past_loss,
+                "past_loss_2": epoch_past_loss_2,
+                "past_loss_8": epoch_past_loss_8,
+                "sigreg_loss": epoch_sigreg_loss,
+                "curvature_loss": epoch_curvature_loss,
+                "latent_norm": latents_norm,
+            })
+        else:
+            pass
+            #if epoch == obs_freeze_epoch:
+            #    print("A", observation_cache[0])
+            #if epoch == obs_freeze_epoch+1:
+            #    print("B", observation_cache[0])
         print(f"Epoch {epoch+1}/{num_epochs} — loss: {epoch_loss:.4f}")
 
         if (epoch + 1) % save_interval == 0:

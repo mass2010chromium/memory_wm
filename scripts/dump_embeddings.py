@@ -14,8 +14,8 @@ from robot_utils import model_update, control_robot_to, gen_sample
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
-    data = torch.load(os.path.join(out_dir, "299.pth"), weights_only=True, map_location=device)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    data = torch.load(os.path.join(out_dir, "114.pth"), weights_only=True, map_location=device)
 
     model = Predictor(**model_config).to(device)
     model.load_state_dict(data['model_state'])
@@ -57,23 +57,28 @@ if __name__ == "__main__":
     import sys
     seed = 45
     if len(sys.argv) > 1:
-        seed = int(sys.argv[1])
-    np.random.seed(seed)
-    world.reset()
+        targets = sys.argv[1:]
+        #seed = int(sys.argv[1])
+    for seed in targets:
+        seed = int(seed)
+        np.random.seed(seed)
+        world.reset()
 
-    import mediapy
-    img = world.render()
-    mediapy.write_image('out_image.png', img)
-    #exit(0)
+        #import mediapy
+        #img = world.render()
+        #mediapy.write_image('out_image.png', img)
+        #exit(0)
 
-    with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
-        config = json.load(jf)
-    model, latents = load_model(config)
+        with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
+            config = json.load(jf)
+        model, latents = load_model(config)
 
-    embeddings = np.empty((100, 100, config['obs_dim']))
-    interaction_flag = np.empty((100, 100), dtype=int)
-    for i, xpos in enumerate(np.linspace(0, 1, 100)):
-        for j, ypos in enumerate(np.linspace(0, 1, 100)):
-            embeddings[i, j, :], interaction_flag[i, j] = embed_pos(model, world, [xpos, ypos])
-    np.save(f"embeddings/{seed}/embeddings.npy", embeddings)
-    np.save(f"embeddings/{seed}/interactions.npy", interaction_flag)
+        embeddings = np.empty((100, 100, config['obs_dim']))
+        interaction_flag = np.empty((100, 100), dtype=int)
+        for i, xpos in enumerate(np.linspace(0, 1, 100)):
+            for j, ypos in enumerate(np.linspace(0, 1, 100)):
+                embeddings[i, j, :], interaction_flag[i, j] = embed_pos(model, world, [xpos, ypos])
+
+        os.makedirs(f"embeddings/{seed}", exist_ok=True)
+        np.save(f"embeddings/{seed}/embeddings.npy", embeddings)
+        np.save(f"embeddings/{seed}/interactions.npy", interaction_flag)
