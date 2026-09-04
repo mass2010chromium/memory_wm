@@ -93,10 +93,10 @@ for epoch in tqdm.trange(1, n_epochs + 1):
             best_val_acc = val_accuracy
             best_val_err = val_error
             best_val_iter = epoch
-            torch.save(model.state_dict(), os.path.join(ROOT_DIR, "best.pth"))
+            torch.save(model.state_dict(), os.path.join(ROOT_DIR, "best_state.pth"))
     if epoch % 100 == 0:
         print(f"Epoch {epoch:2d} | train err: {train_loss:.4f} | train acc: {train_accuracy} | val err: {val_error} | val acc: {val_accuracy}")
 
 
 print(f"Best: epoch {best_val_iter} acc {best_val_acc} err {best_val_err}")
-torch.save(model.state_dict(), os.path.join(ROOT_DIR, "probe.pth"))
+torch.save(model.state_dict(), os.path.join(ROOT_DIR, "probe_state.pth"))

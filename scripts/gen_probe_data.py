@@ -12,8 +12,8 @@ from env_2d import N_TYPES, OBS_SIZE, World2d
 from robot_utils import model_update, control_robot_to, gen_sample
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
-    data = torch.load(os.path.join(out_dir, "199.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_sigreg2")
+    data = torch.load(os.path.join(out_dir, "399.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])

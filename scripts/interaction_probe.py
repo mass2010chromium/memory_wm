@@ -30,6 +30,7 @@ drop = (interactions & 2) > 0
 
 from probe_network import MLPProbe
 def train_probe(embeddings, interactions):
+    #torch.manual_seed(42)
     model = MLPProbe(out_dim=4).cuda()
 
     data = torch.tensor(embeddings.reshape((-1, embeddings.shape[-1])), dtype=torch.float32).cuda()
@@ -38,7 +39,7 @@ def train_probe(embeddings, interactions):
     supervision = torch.tensor(np.stack([pickup, drop], axis=-1).reshape(-1, 2), dtype=torch.float32).cuda()
     neg_supervision = 1.0 - supervision
 
-    n_epochs = 500
+    n_epochs = 2000
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 
@@ -75,7 +76,8 @@ def train_probe(embeddings, interactions):
                 torch.save(model.state_dict(), os.path.join(ROOT_DIR, "embeddings", str(embedding_seed), "best_interaction.pth"))
 
         if epoch % 100 == 0:
-            print(f"Epoch {epoch:2d} | train err: {running_loss:.4f} val acc: {best_val_acc}")
+            pass
+            print(f"Epoch {epoch:2d} | train err: {running_loss:.4f} val acc: {acc}")
 
 
     print(f"Best: epoch {best_val_iter} err {best_val_err} acc {best_val_acc}")

@@ -27,8 +27,8 @@ os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
-#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -78,7 +78,7 @@ if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
 #run = None
-with wandb.init(name="mini-wm-no-state") as run:
+with wandb.init(name="mini-wm-state-hard-obs-sigreg4") as run:
 #if True:
     for epoch in range(start_epoch, num_epochs):
         model.train()
@@ -88,8 +88,13 @@ with wandb.init(name="mini-wm-no-state") as run:
         running_past_loss_2 = 0.0
         running_past_loss_8 = 0.0
         running_dynamics_loss = 0.0
-        running_sigreg_loss = 0.0
+        running_sigreg_loss = torch.zeros(4)
         running_curvature_loss = 0.0
+        running_drift_mag = torch.zeros(2)
+        running_consistency_loss = torch.zeros(2)
+
+        next_latent_cache = torch.zeros_like(latent_cache)
+        next_observation_cache = torch.zeros_like(observation_cache)
 
         for batch_idx, data_batch in enumerate(tqdm.tqdm(dataloader)):
             optimizer.zero_grad()          # clear gradients
@@ -101,12 +106,20 @@ with wandb.init(name="mini-wm-no-state") as run:
             #    prior_latents_2 = torch.zeros((B, hidden_size), dtype=torch.float32)
 
             active_frames = data_batch['index']
-            #prior_latents = latent_cache[active_frames - 1].cuda()
+            first_mask = frame_index <= 0
+            second_mask = frame_index == 1
+
+            # State based initialization
+            prior_latents = latent_cache[active_frames - 1].cuda()
             #prior_latents[frame_index <= 0] = 0
             # Problem: first frame badness.
             # Solution: Mask out first frame
-            prior_latents = model.init_state(observation_cache[active_frames-1].cuda())
-            prior_latents[frame_index <= 0] = 0
+            init_latents = model.init_state(observation_cache[active_frames[second_mask]-1].cuda())
+            prior_latents[second_mask] = init_latents
+
+            # Observation based initialization
+            #prior_latents = model.init_state(observation_cache[active_frames-1].cuda())
+            #prior_latents[frame_index <= 0] = 0
 
             prior_latents_2 = latent_cache[active_frames - 2].cuda()
             prior_latents_2[frame_index <= 1] = 0
@@ -164,21 +177,27 @@ with wandb.init(name="mini-wm-no-state") as run:
 
             # Open-loop closed-loop latent formulation
             pred_err = obs_emb - obs_reconstruct
-            pred_err[frame_index <= 0] = 0
+            pred_err[first_mask] = 0
             pred_loss = pred_err.abs().mean()#pow(2).mean()
             latent_err = ol_latents - cl_latents
-            latent_err[frame_index <= 0] = 0
+            latent_err[first_mask] = 0
             latent_pred_loss = latent_err.abs().mean()#pow(2).mean()
 
             # SIGReg is needed on velocities to ensure the distribution doesn't collapse to uniform+discrete
             # This might be huge... ask Devesh
             velocity = cl_latents - prior_latents
 
-            sigreg_loss = sigreg(obs_emb) + sigreg(cl_latents) + sigreg(10*velocity)
+            prior_obs = observation_cache[active_frames - 1].cuda()
+            prior_obs[first_mask] = 0
+            obs_velocity = obs_emb - prior_obs
+
+            sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), sigreg(10*velocity), sigreg(10*obs_velocity)]
+            sigreg_loss = sum(sigreg_losses)
 
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
             loss = 2*pred_loss + 0.5*latent_pred_loss + 0.2 * past_loss + 0.09 * sigreg_loss
+
             # Ablation: No past loss version, only sigreg and reconstruction
             # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
             # Ablation: No reconstruction loss version, only sigreg
@@ -199,17 +218,31 @@ with wandb.init(name="mini-wm-no-state") as run:
                 loss -= straightness_loss
                 running_curvature_loss += straightness_loss.item() * B
 
+            # Constrain the outputs of obs_embedding and latent embedding modules to match the existing ones.
+            drift_factor = max(0.01, 0.9**(epoch))
+            consistency_losses = [
+                (outputs - latent_cache[active_frames].to(device)).abs().mean(),
+                (obs_emb - observation_cache[active_frames].to(device)).abs().mean()
+            ]
+
+            loss = loss * drift_factor + sum(consistency_losses) * (1 - drift_factor)
+
             outputs = outputs.detach().cpu()
             obs_emb = obs_emb.detach().cpu()
+
+            latent_drift_norm = torch.norm(outputs - latent_cache[active_frames], dim=1).sum()
+            obs_drift_norm = torch.norm(obs_emb - observation_cache[active_frames], dim=1).sum()
+            running_drift_mag += torch.tensor([latent_drift_norm, obs_drift_norm])
+
             if epoch == 0:
-                latent_cache[active_frames] = outputs
-                observation_cache[active_frames] = obs_emb
+                next_latent_cache[active_frames] = outputs
+                next_observation_cache[active_frames] = obs_emb
             else:
-                latent_cache[active_frames] = latent_cache[active_frames] * 0.9 + outputs * 0.1
-                observation_cache[active_frames] = observation_cache[active_frames] * 0.9 + obs_emb * 0.1
+                next_latent_cache[active_frames] = latent_cache[active_frames] * (1 - drift_factor) + outputs * drift_factor
+                next_observation_cache[active_frames] = obs_emb
 
             if epoch == obs_freeze_epoch:
-                observation_cache[active_frames] = obs_emb
+                next_observation_cache[active_frames] = obs_emb
             else:
                 loss.backward()                # backprop
                 optimizer.step()               # update weights
@@ -217,13 +250,16 @@ with wandb.init(name="mini-wm-no-state") as run:
             running_loss += loss.item() * B
             running_reconstruction_loss += pred_loss.item() * B
             running_dynamics_loss += latent_pred_loss.item() * B
-            running_sigreg_loss += sigreg_loss.item() * B
+            running_sigreg_loss += torch.tensor(sigreg_losses).detach().cpu() * B
+            running_consistency_loss += torch.tensor(consistency_losses).detach().cpu() * B
             if predict_past:
                 running_past_loss += past_loss.item() * B
                 running_past_loss_2 += past_loss_2.item() * B
                 running_past_loss_8 += past_loss_8.item() * B
 
         scheduler.step(epoch+1)
+        latent_cache = next_latent_cache
+        observation_cache = next_observation_cache
 
         epoch_loss = running_loss / len(dataset)
         epoch_reconstruction_loss = running_reconstruction_loss / len(dataset)
@@ -232,19 +268,30 @@ with wandb.init(name="mini-wm-no-state") as run:
         epoch_past_loss_8 = running_past_loss_8 / len(dataset)
         epoch_dynamics_loss = running_dynamics_loss / len(dataset)
         epoch_sigreg_loss = running_sigreg_loss / len(dataset)
+        epoch_consistency_loss = running_consistency_loss / len(dataset)
         epoch_curvature_loss = running_curvature_loss / len(dataset)
+        epoch_drift_mag = running_drift_mag / len(dataset)
         latents_norm = torch.norm(latent_cache, dim=1).mean()
+        obs_norm = torch.norm(observation_cache, dim=1).mean()
         if run:
             run.log({
                 "loss": epoch_loss,
                 "obs_loss": epoch_reconstruction_loss,
                 "pred_loss": epoch_dynamics_loss,
-                "past_loss": epoch_past_loss,
-                "past_loss_2": epoch_past_loss_2,
-                "past_loss_8": epoch_past_loss_8,
-                "sigreg_loss": epoch_sigreg_loss,
+                #"past_loss": epoch_past_loss,
+                #"past_loss_2": epoch_past_loss_2,
+                #"past_loss_8": epoch_past_loss_8,
+                "sigreg_loss_state": epoch_sigreg_loss[0],
+                "sigreg_loss_obs": epoch_sigreg_loss[1],
+                "sigreg_loss_state_vel": epoch_sigreg_loss[2],
+                "sigreg_loss_obs_vel": epoch_sigreg_loss[3],
                 "curvature_loss": epoch_curvature_loss,
+                "latent_drift": epoch_drift_mag[0],
+                "obs_drift": epoch_drift_mag[1],
+                "latent_clamp": epoch_consistency_loss[0],
+                "obs_clamp": epoch_consistency_loss[1],
                 "latent_norm": latents_norm,
+                "obs_norm": obs_norm,
             })
         else:
             pass

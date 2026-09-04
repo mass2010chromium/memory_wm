@@ -13,9 +13,8 @@ from robot_utils import model_update, control_robot_to, gen_sample
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-    data = torch.load(os.path.join(out_dir, "114.pth"), weights_only=True, map_location=device)
+def load_model(model_config, checkpoint):
+    data = torch.load(checkpoint, weights_only=True, map_location=device)
 
     model = Predictor(**model_config).to(device)
     model.load_state_dict(data['model_state'])
@@ -40,7 +39,9 @@ def embed_pos(model, world, pos):
             torch.tensor(token_mask).unsqueeze(0).to(device),
             torch.tensor(obs_categories).unsqueeze(0).float().to(device)
         )
-        return obs_embedding[0].detach().cpu().numpy(), interaction_flag
+        ret = obs_embedding[0]
+        return ret.detach().cpu().numpy(), interaction_flag
+        #return model.init_state(ret).detach().cpu().numpy(), interaction_flag
 
         hidden_size = 32
         target_pos = np.array([0.5, 0.5])
@@ -71,14 +72,22 @@ if __name__ == "__main__":
 
         with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
             config = json.load(jf)
-        model, latents = load_model(config)
+        checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+        checkpoint = os.path.join(checkpoint_dir, "499.pth")
+        model, latents = load_model(config, checkpoint)
 
         embeddings = np.empty((100, 100, config['obs_dim']))
+        #embeddings = np.empty((100, 100, config['hidden_dim']))
         interaction_flag = np.empty((100, 100), dtype=int)
         for i, xpos in enumerate(np.linspace(0, 1, 100)):
             for j, ypos in enumerate(np.linspace(0, 1, 100)):
                 embeddings[i, j, :], interaction_flag[i, j] = embed_pos(model, world, [xpos, ypos])
 
-        os.makedirs(f"embeddings/{seed}", exist_ok=True)
-        np.save(f"embeddings/{seed}/embeddings.npy", embeddings)
-        np.save(f"embeddings/{seed}/interactions.npy", interaction_flag)
+
+        out_dir = "embeddings"
+        os.makedirs(f"{out_dir}/{seed}", exist_ok=True)
+        np.save(f"{out_dir}/{seed}/embeddings.npy", embeddings)
+        np.save(f"{out_dir}/{seed}/interactions.npy", interaction_flag)
+
+        with open(f"{out_dir}/{seed}/checkpoint.txt", "w") as of:
+            of.write(str(checkpoint) + "\n")

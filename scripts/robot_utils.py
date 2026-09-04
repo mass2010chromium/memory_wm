@@ -35,6 +35,16 @@ def control_robot_to(world: World2d, target, model, prev_obs, prev_latent, speed
         interaction = 0
 
         obs = world.update(action)
+
+        # Stateless model
+        obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
+        obs_embed = model.embed_obs(
+            torch.tensor(obs_tokens).float().unsqueeze(0).cuda(),
+            torch.tensor(token_mask).unsqueeze(0).cuda(),
+            torch.tensor(obs_categories).unsqueeze(0).cuda()
+        )
+        prev_latent = model.init_state(obs_embed)
+
         latents = model_update(model, prev_latent, obs, action)
         latent_traj.append(latents.detach().cpu())
 

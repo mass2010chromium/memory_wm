@@ -356,6 +356,15 @@ class Predictor(nn.Module):
         obs_reconstruct = self.reconstruction(latents[:, 0, :])
         return obs_embedding, latents, obs_reconstruct
 
+    def openloop_dynamics(self, prior_latents, action):
+        # Required since we are doing single-step single-step prediction... no action or state history.
+        B, D = prior_latents.shape
+        c = rearrange(action, "b a -> b 1 a") # For conditionalblock
+        prior_latents = rearrange(prior_latents, "b d -> b 1 d")
+
+        output = self.dynamics(prior_latents, mask=None, c=c)
+        return output[:, 0, :]
+
     def predict_latent(self, prior_latents, obs_embedding, action):
         # Required since we are doing single-step single-step prediction... no action or state history.
         B, D = prior_latents.shape
@@ -369,13 +378,15 @@ class Predictor(nn.Module):
         q0 = self.query_tokens[0].expand(B, 1, D)
         q1 = self.query_tokens[1].expand(B, 1, D)
 
-        history_and_obs = torch.cat((prior_latents, q0, full_obs_token, q1), 1)
+        #history_and_obs = torch.cat((prior_latents, q0, full_obs_token, q1), 1)
+        history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
         output = self.dynamics(history_and_obs, mask=None, c=c)
         # Get results of query tokens only.
-        return output[:, [1, 3], ...]
+        #return output[:, [1, 3], ...]
+        return output
 
 
     def embed_obs(self, x, token_mask, categories_onehot):
