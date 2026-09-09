@@ -67,7 +67,7 @@ start_epoch = 0
 model, optimizer, latent_cache, observation_cache = init_model(config)
 obs_freeze_epoch = -1
 
-all_actions = torch.tensor(dataset.data_map['action'])
+all_actions = torch.tensor(dataset.data_map['action']).to(device)
 
 num_epochs = 500
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
@@ -79,8 +79,51 @@ predict_past = False
 if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
+def get_init_latent(data_batch):
+    frame_index = data_batch['frame_index']
+    active_frames = data_batch['index']
+    first_mask = frame_index <= 0
+    actions = all_actions[active_frames]
+
+    prior_latents = latent_cache[active_frames - 1]
+
+    obs_embed = model.embed_obs(
+        data_batch['observation.tokens'].to(device),   # x
+        data_batch['observation.token_mask'].to(device),
+        data_batch['observation.token_categories'].to(device)
+    )
+    _latents = model.predict_latent(prior_latents, obs_embed, actions)
+
+    latents = torch.zeros_like(_latents)    # Need new tensor for gradient tracking, instead of reassigning _latents components
+
+    init_latents = model.init_state(observation_cache[active_frames[first_mask]])
+    latents[first_mask, :, :] = init_latents.unsqueeze(1)   # Fake OL + CL latents so they get written into the latent cache.
+    latents[torch.logical_not(first_mask), :, :] = _latents[torch.logical_not(first_mask), :, :]
+    return first_mask, latents, obs_embed
+
+def get_losses(latents, future_frames, match_obs, horizon_factor):
+    future_factor = (future_frames > 0).unsqueeze(-1) * horizon_factor
+    obs_reconstruct = model.reconstruction(latents[:, 0, :])
+    pred_err = (match_obs - obs_reconstruct) * future_factor
+    pred_loss = pred_err.pow(2).sum()
+
+    cl_latents = latents[:, -1, :]
+    ol_latents = latents[:, -2, :]
+    latent_err = (ol_latents - cl_latents) * future_factor
+    latent_pred_loss = latent_err.pow(2).sum()
+
+    return pred_loss, latent_pred_loss, future_factor.sum()
+
+def rollout_latents(latents, active_frames, closed_loop=0):
+    obs_emb = observation_cache[active_frames]
+    actions = all_actions[active_frames]
+    # 0 for openloop rollout, 1 for closed loop rollout
+    next_latents = model.predict_latent(latents[:, closed_loop, :], obs_emb, actions)
+    return next_latents, obs_emb
+
+
 #run = None
-with wandb.init(name="mini-wm-scheduled") as run:
+with wandb.init(name="mini-wm-multistep-openloop") as run:
 #if True:
     for epoch in range(start_epoch, num_epochs):
         model.train()
@@ -97,64 +140,47 @@ with wandb.init(name="mini-wm-scheduled") as run:
 
         for batch_idx, data_batch in enumerate(tqdm.tqdm(dataloader)):
             optimizer.zero_grad()          # clear gradients
-            B = len(data_batch['frame_index'])
             frame_index = data_batch['frame_index']
-            #prior_latents = torch.zeros((B, hidden_size), dtype=torch.float32)
-
-            #if use_temporal_straightening:
-            #    prior_latents_2 = torch.zeros((B, hidden_size), dtype=torch.float32)
-
             active_frames = data_batch['index']
-            first_mask = frame_index <= 0
+            B = len(frame_index)
 
             # State based initialization
             prior_latents = latent_cache[active_frames - 1]
-            #prior_latents[frame_index <= 0] = 0
-            # Problem: first frame badness.
-            # Solution: Mask out first frame
-
-            # Observation based initialization
-            #prior_latents = model.init_state(observation_cache[active_frames-1].to(device))
-            #prior_latents[frame_index <= 0] = 0
+            prior_latents[frame_index <= 0] = 0
 
             prior_latents_2 = latent_cache[active_frames - 2]
             prior_latents_2[frame_index <= 1] = 0
 
-            actions = data_batch['action'].to(device)
-
-            obs_emb, _latents, obs_reconstruct = model(
-                prior_latents,
-                data_batch['observation.tokens'].to(device),   # x
-                data_batch['observation.token_mask'].to(device),
-                data_batch['observation.token_categories'].to(device),
-                actions
-            )
-
-            latents = torch.zeros_like(_latents)
-
-            init_latents = model.init_state(observation_cache[active_frames[first_mask]])
-            init_reconstruct = model.reconstruction(init_latents)
-            init_reconstruct_err = (init_reconstruct - observation_cache[active_frames[first_mask]]).pow(2).sum()
-            latents[first_mask, -1, :] = init_latents  # Fake CL latents so they get written into the latent cache.
-                                                        # OL latents are handled manually (init_reconstruct_err)
-            latents[torch.logical_not(first_mask), :, :] = _latents[torch.logical_not(first_mask), :, :]
+            first_mask, latents, obs_emb = get_init_latent(data_batch)
 
             cl_latents = latents[:, -1, :]
             ol_latents = latents[:, -2, :]
 
             horizon_factor = torch.minimum(0.9 ** (frame_index - epoch/10), torch.tensor(1.0)).unsqueeze(-1).to(device)
-            horizon_weight += horizon_factor.sum()
 
-            # Open-loop closed-loop latent formulation
-            pred_err = obs_emb - obs_reconstruct
-            pred_err[first_mask] = 0
-            pred_err *= horizon_factor
-            # Technically OK because init_reconstruct_err always has horizon factor of 1
-            pred_loss = pred_err.pow(2).sum() + init_reconstruct_err
-            latent_err = ol_latents - cl_latents
-            latent_err[first_mask] = 0
-            latent_err *= horizon_factor
-            latent_pred_loss = latent_err.pow(2).sum()
+            future_frames = data_batch['future_frames'].to(device)
+            # Special: This on uses live computed observations. Others use obs_emb cache... is this a problem?
+            pred_loss, latent_pred_loss, weight = get_losses(latents, future_frames, obs_emb, horizon_factor)
+            horizon_weight += weight
+
+            predict_horizon = 5
+            future_obs = obs_emb
+            future_latents = latents
+            for i in range(1, predict_horizon):
+                future_latents, future_obs = rollout_latents(future_latents, (active_frames + i) % len(all_actions), closed_loop=0)
+                future_pred_loss, future_latent_loss, weight = get_losses(future_latents, future_frames - i, future_obs, horizon_factor)
+                horizon_weight += weight
+                pred_loss += future_pred_loss
+                latent_pred_loss += future_latent_loss
+
+            future_obs = obs_emb
+            future_latents = latents
+            for i in range(1, predict_horizon):
+                future_latents, future_obs = rollout_latents(future_latents, (active_frames + i) % len(all_actions), closed_loop=1)
+                future_pred_loss, future_latent_loss, weight = get_losses(future_latents, future_frames - i, future_obs, horizon_factor)
+                horizon_weight += weight
+                pred_loss += future_pred_loss
+                latent_pred_loss += future_latent_loss
 
             # SIGReg is needed on velocities to ensure the distribution doesn't collapse to uniform+discrete
             # This might be huge... ask Devesh
@@ -169,20 +195,8 @@ with wandb.init(name="mini-wm-scheduled") as run:
 
             # Full loss (reconstruction and dynamics)
             # Copied from jepawm (lambda=0.09)
-            loss = (10/B)*pred_loss + 0.5*latent_pred_loss + 0.09 * sigreg_loss
-
-            # Ablation: No past loss version, only sigreg and reconstruction
-            # loss = pred_loss + latent_pred_loss + 0.09 * sigreg_loss
-            # Ablation: No reconstruction loss version, only sigreg
-            #loss = latent_pred_loss + past_loss + 0.09 * sigreg_loss
+            loss = (5/B)*pred_loss + (0.5/B)*latent_pred_loss + 0.09 * sigreg_loss
             outputs = cl_latents
-
-            # Observation embedding formulation (JEPA), no closed-loop latent
-            #pred_loss = (ol_latents - obs_emb).pow(2).mean()
-            #sigreg_loss = sigreg(obs_emb)
-            # Only reconstruction loss
-            #loss = pred_loss + past_loss + 0.09 * sigreg_loss
-            #outputs = obs_emb
 
             if use_temporal_straightening:
                 prev_velocity = prior_latents - prior_latents_2
@@ -210,11 +224,8 @@ with wandb.init(name="mini-wm-scheduled") as run:
                 next_latent_cache[active_frames] = slerp(latent_cache[active_frames], outputs, drift_factor)
                 next_observation_cache[active_frames] = obs_emb
 
-            if epoch == obs_freeze_epoch:
-                next_observation_cache[active_frames] = obs_emb
-            else:
-                loss.backward()                # backprop
-                optimizer.step()               # update weights
+            loss.backward()                # backprop
+            optimizer.step()               # update weights
 
             running_loss += loss.item() * B
             running_reconstruction_loss += pred_loss.item()
@@ -249,12 +260,6 @@ with wandb.init(name="mini-wm-scheduled") as run:
                 "latent_norm": latents_norm,
                 "obs_norm": obs_norm,
             })
-        else:
-            pass
-            #if epoch == obs_freeze_epoch:
-            #    print("A", observation_cache[0])
-            #if epoch == obs_freeze_epoch+1:
-            #    print("B", observation_cache[0])
         print(f"Epoch {epoch+1}/{num_epochs} — loss: {epoch_loss:.4f}")
 
         if (epoch + 1) % save_interval == 0:

@@ -28,7 +28,7 @@ def train_probe(embeddings, val_embeddings):
                 gt.append([xpos, ypos])
     gt = torch.tensor(gt, dtype=torch.float32).cuda()
 
-    n_epochs = 10000
+    n_epochs = 40000
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs/10)
 

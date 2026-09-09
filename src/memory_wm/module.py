@@ -243,15 +243,21 @@ class MLP(nn.Module):
         input_dim,
         hidden_dim,
         output_dim=None,
+        hidden_layers=3,
         norm_fn=nn.LayerNorm,
         act_fn=nn.GELU,
     ):
         super().__init__()
         norm_fn = norm_fn(hidden_dim) if norm_fn is not None else nn.Identity()
         self.in_proj = nn.Linear(input_dim, hidden_dim)
-        self.h1 = nn.Linear(hidden_dim, hidden_dim)
-        #self.h2 = nn.Linear(hidden_dim, hidden_dim)
-        #self.h3 = nn.Linear(hidden_dim, hidden_dim)
+
+        self.hidden_layers = nn.ModuleList([])
+        for i in range(hidden_layers):
+            self.hidden_layers.append(nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                norm_fn,
+                act_fn(),
+            ))
         self.out_proj = nn.Linear(hidden_dim, output_dim)
         self.in_dim = input_dim
         self.out_dim = output_dim
@@ -275,9 +281,8 @@ class MLP(nn.Module):
         # return self.net(_x)
         x = self.in_proj(_x)
         x[..., :self.in_dim] += _x
-        x = self.h1(x) + x
-        #x = self.h2(x) + x
-        #x = self.h3(x) + x
+        for block in self.hidden_layers:
+            x = block(x) + x
         return x[..., :self.out_dim] + self.out_proj(x)
 
 
@@ -330,12 +335,14 @@ class Predictor(nn.Module):
         self.reconstruction = MLP(
             hidden_dim,
             hidden_dim * 2,
-            obs_dim
+            obs_dim,
+            hidden_layers=6
         )
         self.init_embedder = MLP(
             obs_dim, 
             hidden_dim * 2,
-            hidden_dim
+            hidden_dim,
+            hidden_layers=0
         )
 
     def forward(self, prior_latents, x, token_mask, categories_onehot, c):

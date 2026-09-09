@@ -17,8 +17,8 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-    data = torch.load(os.path.join(out_dir, "299.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_success")
+    data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -31,6 +31,7 @@ seed = 42
 np.random.seed(seed)
 world = World2d(data)
 world.reset()
+precomputed_embeddings = np.load(f"embeddings/{seed}/embeddings.npy")
 
 with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
     config = json.load(jf)
@@ -58,6 +59,9 @@ with torch.no_grad():
     )
     # Unbatch
     prior_latent = model.init_state(init_obs_embed[0])
+    obs_reconstruct = model.reconstruction(prior_latent)
+    obs_err = (init_obs_embed - obs_reconstruct).pow(2).mean()
+    print("Reconstruction error:", obs_err)
 
 
 import sys, select, termios, time, tty
@@ -94,17 +98,30 @@ def render(action):
 
     obs_err = (obs_emb - obs_reconstruct).pow(2).mean()
     #prior_latent = model.init_state(obs_emb.cuda())
-    prior_latent = latents[-2]
+    prior_latent = latents[-1]
+    #prior_latent = latents[-2]
     obs_simplify = simplify_obs(obs_new)
     a = action.tolist()
     obs_mag = torch.norm(obs_emb)
+
+    distances = np.linalg.norm(obs_reconstruct.numpy() - precomputed_embeddings, axis=-1)
+    # Coordinates in distance grid are (x, y)
+    max_position = np.array(np.unravel_index(np.argmin(distances), distances.shape)) / 100
+    x, y = world.robot.pos
+    px = int(np.round(x * 99))
+    py = int(np.round(x * 99))
+    #print(precomputed_embeddings[px, py])
+    #print(obs_reconstruct)
+    #print(obs_emb)
+    #print(np.min(distances), obs_err, max_position)
+    #input()
 
     with torch.no_grad():
         v = obs_reconstruct.unsqueeze(0).cuda()
         probe_res = probe(v).cpu()[0]
     probe_x, probe_y = probe_res
     title = f"Interactive world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}], obs_err: {obs_err:.3f} obs_mag: {obs_mag:.3f}"
-    title += f" probe ({probe_x:.3f}, {probe_y:.3f})"
+    title += f" probe ({probe_x:.3f}, {probe_y:.3f}) closest ({max_position[0]:.3f}, {max_position[1]:.3f})"
     plotter.set_title(title)
 
     display = world.render()

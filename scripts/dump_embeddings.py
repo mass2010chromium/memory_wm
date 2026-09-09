@@ -72,8 +72,8 @@ if __name__ == "__main__":
 
         with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
             config = json.load(jf)
-        checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints")
-        checkpoint = os.path.join(checkpoint_dir, "499.pth")
+        checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
+        checkpoint = os.path.join(checkpoint_dir, "84.pth")
         model, latents = load_model(config, checkpoint)
 
         embeddings = np.empty((100, 100, config['obs_dim']))

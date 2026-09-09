@@ -26,10 +26,14 @@ class World2dDataset(Dataset):
         episode_offsets = self.episode_starts.tolist()
         print("Reordering dataset...")
         t0 = time.monotonic()
+        self.future_frames = []
         while len(active_episodes) > 0:
             remaining = []
             for episode_idx, remain_count in active_episodes:
-                data_order.append(episode_offsets[episode_idx])
+                data_entry = episode_offsets[episode_idx]
+
+                self.future_frames.append(remain_count)
+                data_order.append(data_entry)
                 episode_offsets[episode_idx] += 1
                 if remain_count > 1:
                     remaining.append((episode_idx, remain_count - 1))
@@ -45,8 +49,9 @@ class World2dDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
-        frame = self.data_order[index]
-        return self.dataset[frame]
+        frame = self.dataset[self.data_order[index]]
+        frame['future_frames'] = torch.tensor(self.future_frames[index])
+        return frame
 
 class SmallPackedDataset(Dataset):
 
@@ -92,31 +97,28 @@ class SmallPackedDataset(Dataset):
         return SmallPackedDataset(keys=keys, data=data)
 
 if __name__ == "__main__":
+    import time
+    import tqdm
+    t0 = time.time()
     dataset = World2dDataset(LeRobotDataset("local/world2d", root="./world2d"))
 
     keys = [
         'index',
         'episode_index',
         'frame_index',
+        'future_frames',
         'observation.tokens',
         'observation.token_mask',
         'observation.token_categories',
         'action',
     ]
-    import time
-    import tqdm
-    t0 = time.time()
-    ds2 = SmallPackedDataset.from_dataset(keys, tqdm.tqdm(dataset))
     t1 = time.time()
+    ds2 = SmallPackedDataset.from_dataset(keys, tqdm.tqdm(dataset))
+    #ds2 = SmallPackedDataset(root=os.path.join("world2d_reorder"))
+    t2 = time.time()
     for item in tqdm.tqdm(ds2):
         pass
-    t2 = time.time()
-    print(t2 - t1, t1 - t0)
-    
-    # Add episode start key
-    ds2.keys.append('episode_start')
-    frame_is_start = ds2.data_map['frame_index'] == 0
-    ds2.data.append(frame_is_start)
-    ds2.data_map['episode_start'] = frame_is_start
+    t3 = time.time()
+    print(t3 - t2, t2 - t1, t1 - t0)
 
     ds2.save("world2d_reorder")

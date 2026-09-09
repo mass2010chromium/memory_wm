@@ -7,5 +7,5 @@
   "depth": 6,
   "heads": 4,
   "dim_head": 16,
-  "mlp_dim": 32
+  "mlp_dim": 64
 }

@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
     def load_model(model_config):
         out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-        data = torch.load(os.path.join(out_dir, "449.pth"), weights_only=True)
+        data = torch.load(os.path.join(out_dir, "49.pth"), weights_only=True)
 
         model = Predictor(**model_config).cuda()
         model.load_state_dict(data['model_state'])
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "world.json"), "r") as jf:
         data = json.load(jf)
-    seed = 44
+    seed = 43
     np.random.seed(seed)
     world = World2d(data)
     last_obs = world.reset()
@@ -137,7 +137,8 @@ if __name__ == "__main__":
         #world.items.append(item)
         return obs
 
-    target_pos = world.items[-1].pos
+    target_pos = np.random.random(2)
+    #target_pos = world.items[-1].pos
     goal = oracle_obs_embed(target_pos)
     #goal = oracle_obs_embed(None)
     latent_state = model.init_state(embed_obs(last_obs))
@@ -164,7 +165,7 @@ if __name__ == "__main__":
         discrete_action_normalized = torch.round(torch.clamp(actions[..., 2:], min=-1.0, max=1.0))
         return torch.cat((displacements_normalized, discrete_action_normalized), dim=-1)
 
-    planner = CEMPlanner(3, plan_horizon=6, num_candidates=1000, num_elites=100,
+    planner = CEMPlanner(3, plan_horizon=3, num_candidates=1000, num_elites=100,
                             num_iterations=5, clip_actions=clip_actions, device=device)
 
     def reward(states, _actions):
@@ -180,29 +181,30 @@ if __name__ == "__main__":
             res += 'd'
         return res
 
-    def render():
+    def render(update=True):
         global latent_state
-        with torch.no_grad():
-            action = planner.plan(latent_state[0], model.openloop_dynamics, reward)
-        obs = world.update(action.cpu().numpy())
-        obs_simplify = simplify_obs(obs)
+        if update:
+            with torch.no_grad():
+                action = planner.plan(latent_state[0], model.openloop_dynamics, reward)
+            obs = world.update(action.cpu().numpy())
+            obs_simplify = simplify_obs(obs)
 
-        # Closed loop latent
-        #latent_state = model.predict_latent(latent_state, embed_obs(obs), clip_actions(action).unsqueeze(0))[:, 1, :]
-        # CHEAT: memoryless for now. I think the world model will implode if asked to use even CL states
-        latent_state = model.init_state(embed_obs(obs))
-        a = action.cpu().numpy().tolist()
-        pos = world.robot.pos
-        title = f"Plan world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}] pos: [{pos[0]:.3f}, {pos[1]:.3f}]"
-        title += f" target: [{target_pos[0]:.3f}, {target_pos[1]:.3f}]"
-        plotter.set_title(title)
+            # Closed loop latent
+            latent_state = model.predict_latent(latent_state, embed_obs(obs), clip_actions(action).unsqueeze(0))[:, 1, :]
+            # CHEAT: memoryless for now. I think the world model will implode if asked to use even CL states
+            #latent_state = model.init_state(embed_obs(obs))
+            a = action.cpu().numpy().tolist()
+            pos = world.robot.pos
+            title = f"Plan world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}] pos: [{pos[0]:.3f}, {pos[1]:.3f}]"
+            title += f" target: [{target_pos[0]:.3f}, {target_pos[1]:.3f}]"
+            plotter.set_title(title)
 
         display = world.render()
         display = 255 - np.mean(display, axis=-1)
         plotter.plot_image_section(display, start_row=0)
         plotter.draw()
 
-    render()
+    render(update=False)
 
     import sys, select, termios, time, tty
     def getKey():
@@ -216,6 +218,7 @@ if __name__ == "__main__":
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, _settings)
         return key
     _settings = termios.tcgetattr(sys.stdin)
+    render()
     try:
         mode = 0
         while True:
