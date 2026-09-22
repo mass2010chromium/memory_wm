@@ -29,8 +29,8 @@ os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
-#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
+#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -79,9 +79,9 @@ predict_past = False
 if use_temporal_straightening:
     straightness_measure = torch.nn.CosineSimilarity()
 
-#run = None
-with wandb.init(name="mini-wm-scheduled") as run:
-#if True:
+run = None
+#with wandb.init(name="mini-wm-scheduled") as run:
+if True:
     for epoch in range(start_epoch, num_epochs):
         model.train()
         running_loss = 0.0
@@ -105,6 +105,15 @@ with wandb.init(name="mini-wm-scheduled") as run:
             #    prior_latents_2 = torch.zeros((B, hidden_size), dtype=torch.float32)
 
             active_frames = data_batch['index']
+            flag = active_frames == 10000
+            if torch.any(flag):
+                print(data_batch['observation.tokens'][flag])
+                print(active_frames[flag])
+                print(frame_index[flag])
+                print(data_batch['action'][flag])
+                exit(0)
+            else:
+                continue
             first_mask = frame_index <= 0
 
             # State based initialization

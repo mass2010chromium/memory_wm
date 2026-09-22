@@ -39,7 +39,7 @@ def train_probe(embeddings, interactions):
     supervision = torch.tensor(np.stack([pickup, drop], axis=-1).reshape(-1, 2), dtype=torch.float32).cuda()
     neg_supervision = 1.0 - supervision
 
-    n_epochs = 4000
+    n_epochs = 2000
     optimizer = optim.AdamW(model.parameters(), lr=1e-4)
     #scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=n_epochs)
 

@@ -75,7 +75,7 @@ class CEMPlanner:
             std = elite_actions.std(dim=0, unbiased=False) + 1e-5 
 
         # In receding horizon control, we only execute the first action of the best sequence
-        return mean[0]
+        return mean[0], mean
 
 
 if __name__ == "__main__":
@@ -95,8 +95,8 @@ if __name__ == "__main__":
     plotter.setup_image(256, 256, z_range=[0, 255])
 
     def load_model(model_config):
-        out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-        data = torch.load(os.path.join(out_dir, "49.pth"), weights_only=True)
+        out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+        data = torch.load(os.path.join(out_dir, "299.pth"), weights_only=True)
 
         model = Predictor(**model_config).cuda()
         model.load_state_dict(data['model_state'])
@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "world.json"), "r") as jf:
         data = json.load(jf)
-    seed = 43
+    seed = 99
     np.random.seed(seed)
     world = World2d(data)
     last_obs = world.reset()
@@ -165,8 +165,8 @@ if __name__ == "__main__":
         discrete_action_normalized = torch.round(torch.clamp(actions[..., 2:], min=-1.0, max=1.0))
         return torch.cat((displacements_normalized, discrete_action_normalized), dim=-1)
 
-    planner = CEMPlanner(3, plan_horizon=3, num_candidates=1000, num_elites=100,
-                            num_iterations=5, clip_actions=clip_actions, device=device)
+    planner = CEMPlanner(3, plan_horizon=1, num_candidates=1000, num_elites=100,
+                            num_iterations=50, clip_actions=clip_actions, device=device)
 
     def reward(states, _actions):
         predicted_obs = model.reconstruction(states)
@@ -185,7 +185,9 @@ if __name__ == "__main__":
         global latent_state
         if update:
             with torch.no_grad():
-                action = planner.plan(latent_state[0], model.openloop_dynamics, reward)
+                action, actions = planner.plan(latent_state[0], model.openloop_dynamics, reward)
+            #print(actions)
+            #input()
             obs = world.update(action.cpu().numpy())
             obs_simplify = simplify_obs(obs)
 

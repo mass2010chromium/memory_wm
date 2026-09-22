@@ -17,8 +17,8 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_success")
-    data = torch.load(os.path.join(out_dir, "99.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
+    data = torch.load(os.path.join(out_dir, "9.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -39,6 +39,7 @@ model, latents = load_model(config)
 
 def model_update(latent, obs, action):
     obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
+    print("tokens:", obs_tokens)
     with torch.no_grad():
         obs_emb, latents, obs_reconstruct = model(
             latent.unsqueeze(0).cuda(),
@@ -61,7 +62,11 @@ with torch.no_grad():
     prior_latent = model.init_state(init_obs_embed[0])
     obs_reconstruct = model.reconstruction(prior_latent)
     obs_err = (init_obs_embed - obs_reconstruct).pow(2).mean()
-    print("Reconstruction error:", obs_err)
+    prior_latent = prior_latent.cpu()
+    print(obs_tokens)
+    print(prior_latent)
+    print(init_obs_embed[0])
+past_obs = init_obs_embed[0].cpu()
 
 
 import sys, select, termios, time, tty
@@ -92,19 +97,45 @@ def simplify_obs(obs):
 
 def render(action):
     global prior_latent
+    action = [ 0.00183289, -0.00295556, 0.0 ]
     action = torch.tensor(action)
     obs_new = world.update(action)
     obs_emb, latents, obs_reconstruct = model_update(prior_latent, obs_new, action)
 
-    obs_err = (obs_emb - obs_reconstruct).pow(2).mean()
+    obs_err = (obs_emb - obs_reconstruct).norm().mean()
+    prev_latent = prior_latent
+    #print(latents[0].norm(), latents[1].norm())
+    #input()
     #prior_latent = model.init_state(obs_emb.cuda())
     prior_latent = latents[-1]
     #prior_latent = latents[-2]
+    pred_err = (latents[-2] - latents[-1]).norm().mean()
     obs_simplify = simplify_obs(obs_new)
     a = action.tolist()
     obs_mag = torch.norm(obs_emb)
+    latent_mag = torch.norm(latents[-1])
+    #prior_latent /= latent_mag
+    #prior_latent *= 8.0
+    init_state = model.init_state(obs_emb.cuda())
+    cheat_reconstruct = model.reconstruction(init_state).detach().cpu()
+    
+    obs_delta = obs_emb - past_obs
+    pred_delta = obs_reconstruct - past_obs
+    print("cheat | recons:", (cheat_reconstruct - obs_emb).norm(), (obs_reconstruct - obs_emb).norm())
+    print(past_obs)
+    print(obs_emb)
+    print(obs_delta)
+    #print("Obs delta:")
+    print("norm(d) norm(d') align center", obs_delta.norm(), pred_delta.norm(), (obs_delta @ pred_delta) / (obs_delta.norm() * pred_delta.norm()), pred_delta @ obs_reconstruct)
+    print("latent_v", (prior_latent - prev_latent).norm())
+    print("emb rec pas", obs_emb.norm(), obs_reconstruct.norm(), past_obs.norm())
+    print("raw   ", obs_emb)
+    print("reset ", cheat_reconstruct)
+    print("recons", obs_reconstruct)
+    input()
 
     distances = np.linalg.norm(obs_reconstruct.numpy() - precomputed_embeddings, axis=-1)
+    #distances = np.linalg.norm(cheat_reconstruct.numpy() - precomputed_embeddings, axis=-1)
     # Coordinates in distance grid are (x, y)
     max_position = np.array(np.unravel_index(np.argmin(distances), distances.shape)) / 100
     x, y = world.robot.pos
@@ -121,17 +152,19 @@ def render(action):
         probe_res = probe(v).cpu()[0]
     probe_x, probe_y = probe_res
     title = f"Interactive world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}], obs_err: {obs_err:.3f} obs_mag: {obs_mag:.3f}"
-    title += f" probe ({probe_x:.3f}, {probe_y:.3f}) closest ({max_position[0]:.3f}, {max_position[1]:.3f})"
+    title += f" latent_mag: {latent_mag:.3f} pred_err: {pred_err:.3f} probe ({probe_x:.3f}, {probe_y:.3f})"
+    title += f" closest ({max_position[0]:.3f}, {max_position[1]:.3f}) real ({world.robot.pos[0]:.3f}, {world.robot.pos[1]:.3f})"
     plotter.set_title(title)
 
     display = world.render()
     display = 255 - np.mean(display, axis=-1)
     plotter.plot_image_section(display, start_row=0)
-    plotter.draw()
+    #plotter.draw()
 
 try:
     while True:
         key = getKey()
+        #key = 'w'
         if key == 'w':
             render([0.0, 0.05, 0.0])
         if key == 's':

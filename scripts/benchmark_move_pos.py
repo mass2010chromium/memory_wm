@@ -71,6 +71,13 @@ def run_benchmark():
         
         # Generate uniform random target in [0, 1] x [0, 1]
         target_pos = np.random.uniform(0.0, 1.0, size=2)
+        max_movement = 0.25
+        delta = target_pos - world.robot.pos
+        dist = np.linalg.norm(delta)
+        if dist > max_movement:
+            delta = delta * (max_movement / dist)
+        target_pos = world.robot.pos + delta
+
         goal_embed = oracle_obs_embed(world, target_pos)
 
         def clip_actions(actions: torch.Tensor):

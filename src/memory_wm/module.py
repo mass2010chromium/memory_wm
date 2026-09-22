@@ -9,7 +9,7 @@ from einops import rearrange, einsum
 #      (x_0, x_d/2), (x_1, x_d/2+1)...
 class RotaryPositionalEmbeddings(nn.Module):
 
-  def __init__(self, d: int, base: int = 100):
+  def __init__(self, d: int, base: int = 2):  # Short default base because sequence length is tiny (2).
     super().__init__()
     self.base = base
     self.d = d
@@ -18,10 +18,10 @@ class RotaryPositionalEmbeddings(nn.Module):
 
   def _build_cache(self, x: torch.Tensor):
 
-    if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
+    if self.cos_cached is not None and x.shape[2] <= self.cos_cached.shape[2]:
       return
 
-    seq_len = x.shape[0]
+    seq_len = x.shape[2]
 
     # THETA = 10,000^(-2*i/d) or 1/10,000^(2i/d)
     theta = 1. / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device)
@@ -37,8 +37,8 @@ class RotaryPositionalEmbeddings(nn.Module):
 
 
     #Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d], [sinTHETA_1, sinTHETA_2...sinTHETA_d]
-    self.cos_cached = idx_theta2.cos()[:, None, None, :]
-    self.sin_cached = idx_theta2.sin()[:, None, None, :]
+    self.cos_cached = idx_theta2.cos()[None, None, :, :]
+    self.sin_cached = idx_theta2.sin()[None, None, :, :]
 
   def _neg_half(self, x: torch.Tensor):
 
@@ -49,13 +49,14 @@ class RotaryPositionalEmbeddings(nn.Module):
 
 
   def forward(self, x: torch.Tensor):
-
+    """Expected input format: B H T D (batch heads sequence embed_dimension)
+    """
     self._build_cache(x)
 
     neg_half_x = self._neg_half(x)
 
     # [x_1*cosTHETA_1 - x_d/2*sinTHETA_d/2, ....]
-    return (x * self.cos_cached[:x.shape[0]]) + (neg_half_x * self.sin_cached[:x.shape[0]])
+    return (x * self.cos_cached[:, :, :x.shape[2], :]) + (neg_half_x * self.sin_cached[:, :, :x.shape[2], :])
 
 # Copying from LeWorldModel codebase
 class SIGReg(torch.nn.Module):
@@ -92,7 +93,7 @@ class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0.0):
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
+            #nn.LayerNorm(dim), # Remove redundant LayerNorm (in ConditionalBlock already)
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
@@ -114,7 +115,7 @@ class Attention(nn.Module):
         self.heads = heads
         self.scale = dim_head**-0.5
         self.dropout = dropout
-        self.norm = nn.LayerNorm(dim)
+        #self.norm = nn.LayerNorm(dim)
         self.attend = nn.Softmax(dim=-1)
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
         self.to_out = (
@@ -128,7 +129,7 @@ class Attention(nn.Module):
         """
         x : (B, T, D)
         """
-        x = self.norm(x)
+        #x = self.norm(x)   # CRITICAL: Removes AdaLN adjustments...
         drop = self.dropout if self.training else 0.0
         qkv = self.to_qkv(x).chunk(3, dim=-1)  # q, k, v: (B, heads, T, dim_head)
         q, k, v = (rearrange(t, "b t (h d) -> b h t d", h=self.heads) for t in qkv)
@@ -138,7 +139,7 @@ class Attention(nn.Module):
             attn_mask = rearrange(attn_mask, "b x y -> b 1 x y")    # Account for attention heads
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=drop, attn_mask=attn_mask, is_causal=causal)
         out = rearrange(out, "b h t d -> b t (h d)")
-        return x + self.to_out(out)
+        return self.to_out(out) # Removed residual: Done in ConditionalBlock
 
 
 def modulate(x, shift, scale):
@@ -244,18 +245,18 @@ class MLP(nn.Module):
         hidden_dim,
         output_dim=None,
         hidden_layers=3,
-        norm_fn=nn.LayerNorm,
+        #norm_fn=nn.LayerNorm,
         act_fn=nn.GELU,
     ):
         super().__init__()
-        norm_fn = norm_fn(hidden_dim) if norm_fn is not None else nn.Identity()
+        #norm_fn = norm_fn(hidden_dim) if norm_fn is not None else nn.Identity()
         self.in_proj = nn.Linear(input_dim, hidden_dim)
 
         self.hidden_layers = nn.ModuleList([])
         for i in range(hidden_layers):
             self.hidden_layers.append(nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
-                norm_fn,
+                nn.LayerNorm(hidden_dim),
                 act_fn(),
             ))
         self.out_proj = nn.Linear(hidden_dim, output_dim)
@@ -311,6 +312,7 @@ class Predictor(nn.Module):
         self.query_tokens = nn.Parameter(torch.randn(2, hidden_dim))
 
         self.obs_proj = nn.Linear(input_dim, obs_dim)
+        self.obs_proj_2 = nn.Linear(obs_dim, hidden_dim)
 
         self.obs_embedder = Transformer(
             obs_dim,
@@ -331,18 +333,19 @@ class Predictor(nn.Module):
             mlp_dim,
             dropout,
             block_class=ConditionalBlock,
+            #block_class=Block,
         )
         self.reconstruction = MLP(
             hidden_dim,
             hidden_dim * 2,
             obs_dim,
-            hidden_layers=6
+            hidden_layers=8
         )
         self.init_embedder = MLP(
             obs_dim, 
             hidden_dim * 2,
             hidden_dim,
-            hidden_layers=0
+            hidden_layers=8
         )
 
     def forward(self, prior_latents, x, token_mask, categories_onehot, c):
@@ -375,25 +378,31 @@ class Predictor(nn.Module):
     def predict_latent(self, prior_latents, obs_embedding, action):
         # Required since we are doing single-step single-step prediction... no action or state history.
         B, D = prior_latents.shape
-        c = rearrange(action, "b a -> b 1 a") # For conditionalblock
         prior_latents = rearrange(prior_latents, "b d -> b 1 d")
 
-        obs_token = rearrange(obs_embedding, "b d -> b 1 d")
-        full_obs_token = torch.zeros(B, 1, D, dtype=prior_latents.dtype, device=prior_latents.device)
-        full_obs_token[:, :, :obs_token.shape[-1]] = obs_token
+        #obs_token = rearrange(obs_embedding, "b d -> b 1 d")
+        #full_obs_token = torch.zeros(B, 1, D, dtype=prior_latents.dtype, device=prior_latents.device)
+        #full_obs_token[:, :, :obs_token.shape[-1]] = obs_token
+        full_obs_token = rearrange(self.obs_proj_2(obs_embedding), "b d -> b 1 d")
 
-        q0 = self.query_tokens[0].expand(B, 1, D)
-        q1 = self.query_tokens[1].expand(B, 1, D)
 
+        #q0 = self.query_tokens[0].expand(B, 1, D)
+        #q1 = self.query_tokens[1].expand(B, 1, D)
         #history_and_obs = torch.cat((prior_latents, q0, full_obs_token, q1), 1)
         history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
+        c = rearrange(action, "b a -> b 1 a") # For conditionalblock
         output = self.dynamics(history_and_obs, mask=None, c=c)
         # Get results of query tokens only.
         #return output[:, [1, 3], ...]
         return output
+
+        #action_token = rearrange(self.action_proj(action), "b d -> b 1 d")
+        #tokens = torch.cat((prior_latents, action_token, full_obs_token), 1)
+        #output = self.dynamics(tokens, mask=None)
+        #return output[:, [1, 2], ...]
 
 
     def embed_obs(self, x, token_mask, categories_onehot):

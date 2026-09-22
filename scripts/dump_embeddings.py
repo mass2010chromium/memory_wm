@@ -50,44 +50,44 @@ def embed_pos(model, world, pos):
         # Open-loop latent
         return latent_traj[-1][:, 0, :].numpy(), interaction_flag
 
+def dump_embeddings(world, seed, config, out_dir, model, checkpoint, steps=100):
+    np.random.seed(seed)
+    world.reset()
+
+    embeddings = np.empty((steps, steps, config['obs_dim']))
+    #embeddings = np.empty((steps, steps, config['hidden_dim']))
+    interaction_flag = np.empty((steps, steps), dtype=int)
+    for i, xpos in enumerate(np.linspace(0, 1, steps)):
+        for j, ypos in enumerate(np.linspace(0, 1, steps)):
+            embeddings[i, j, :], interaction_flag[i, j] = embed_pos(model, world, [xpos, ypos])
+
+
+    os.makedirs(f"{out_dir}/{seed}", exist_ok=True)
+    np.save(f"{out_dir}/{seed}/embeddings.npy", embeddings)
+    np.save(f"{out_dir}/{seed}/interactions.npy", interaction_flag)
+
+    with open(f"{out_dir}/{seed}/checkpoint.txt", "w") as of:
+        of.write(str(checkpoint) + "\n")
+    return embeddings
+
 if __name__ == "__main__":
     with open(os.path.join(SCRIPT_DIR, "world.json"), "r") as jf:
         data = json.load(jf)
     world = World2d(data)
 
+    with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
+        config = json.load(jf)
+    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
+    checkpoint = os.path.join(checkpoint_dir, "49.pth")
+    model, latents = load_model(config, checkpoint)
+
     import sys
     seed = 45
+    targets = [seed]
+    out_dir = "embeddings"
     if len(sys.argv) > 1:
         targets = sys.argv[1:]
         #seed = int(sys.argv[1])
     for seed in targets:
         seed = int(seed)
-        np.random.seed(seed)
-        world.reset()
-
-        #import mediapy
-        #img = world.render()
-        #mediapy.write_image('out_image.png', img)
-        #exit(0)
-
-        with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
-            config = json.load(jf)
-        checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-        checkpoint = os.path.join(checkpoint_dir, "84.pth")
-        model, latents = load_model(config, checkpoint)
-
-        embeddings = np.empty((100, 100, config['obs_dim']))
-        #embeddings = np.empty((100, 100, config['hidden_dim']))
-        interaction_flag = np.empty((100, 100), dtype=int)
-        for i, xpos in enumerate(np.linspace(0, 1, 100)):
-            for j, ypos in enumerate(np.linspace(0, 1, 100)):
-                embeddings[i, j, :], interaction_flag[i, j] = embed_pos(model, world, [xpos, ypos])
-
-
-        out_dir = "embeddings"
-        os.makedirs(f"{out_dir}/{seed}", exist_ok=True)
-        np.save(f"{out_dir}/{seed}/embeddings.npy", embeddings)
-        np.save(f"{out_dir}/{seed}/interactions.npy", interaction_flag)
-
-        with open(f"{out_dir}/{seed}/checkpoint.txt", "w") as of:
-            of.write(str(checkpoint) + "\n")
+        dump_embeddings(world, seed, config, out_dir, model, checkpoint)
