@@ -61,7 +61,7 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
-start_epoch = 10
+start_epoch = 281
 model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
 #start_epoch = 0
 #model, optimizer, latent_cache, observation_cache = init_model(config)
@@ -131,12 +131,19 @@ def rollout_latents(latents, active_frames):
     next_latents = model.predict_latent(latents, obs_emb, actions)
     return next_latents, obs_emb
 
-
-run = None
-#with wandb.init(name="mini-wm-no-v-sigreg") as run:
-if True:
+lock_grad = False
+#run = None
+with wandb.init(name="mini-wm-hard-freeze") as run:
+#if True:
     for epoch in range(start_epoch, num_epochs):
         model.train()
+        if epoch >= 10 and not lock_grad:
+            model.cat_embedding.requires_grad = False
+            for param in model.obs_proj.parameters():
+                param.requires_grad = False
+            for param in model.obs_embedder.parameters():
+                param.requires_grad = False
+            lock_grad = True
         running_loss = 0.0
         running_reconstruction_loss = torch.zeros(3)
         running_dynamics_loss = torch.zeros(3)
@@ -165,20 +172,20 @@ if True:
             prior_latents_2[frame_index <= 1] = 0
 
             first_mask, latents, obs_emb = get_init_latent(data_batch)
-            flag = data_batch['index'] == 1
-            any_ok = torch.any(flag)
-            if any_ok:
-                print()
-                #print(data_batch['index'].tolist())
-                print(torch.argwhere(flag))
-                print(data_batch['frame_index'][flag])
-                print(data_batch['observation.tokens'][flag])
-                print(obs_emb[flag])
-                print(active_frames[flag])
-                print(observation_cache[active_frames][torch.argwhere(flag)])
-                input()
-            else:
-                continue
+            # flag = data_batch['index'] == 1
+            # any_ok = torch.any(flag)
+            # if any_ok:
+            #     print()
+            #     print(data_batch['index'].tolist())
+            #     print(torch.argwhere(flag))
+            #     print(data_batch['frame_index'][flag])
+            #     print(data_batch['observation.tokens'][flag])
+            #     print(obs_emb[flag])
+            #     print(active_frames[flag])
+            #     print(observation_cache[active_frames][torch.argwhere(flag)])
+            #     input()
+            # else:
+            #     continue
 
             cl_latents = latents[:, -1, :]
             ol_latents = latents[:, -2, :]
@@ -272,8 +279,8 @@ if True:
                 next_latent_cache[active_frames] = slerp(latent_cache[active_frames], outputs, drift_factor)
                 next_observation_cache[active_frames] = obs_emb
 
-            #loss.backward()                # backprop
-            #optimizer.step()               # update weights
+            loss.backward()                # backprop
+            optimizer.step()               # update weights
 
             #running_loss += loss.item() * B
             running_loss += _loss.item() * B

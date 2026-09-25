@@ -18,7 +18,7 @@ from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
     out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-    data = torch.load(os.path.join(out_dir, "9.pth"), weights_only=True)
+    data = torch.load(os.path.join(out_dir, "274.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -37,9 +37,13 @@ with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
     config = json.load(jf)
 model, latents = load_model(config)
 
+#mode = "visual"
+mode = "text"
+
 def model_update(latent, obs, action):
     obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
-    print("tokens:", obs_tokens)
+    if mode == "text":
+        print("tokens:", obs_tokens)
     with torch.no_grad():
         obs_emb, latents, obs_reconstruct = model(
             latent.unsqueeze(0).cuda(),
@@ -83,9 +87,12 @@ def getKey():
 _settings = termios.tcgetattr(sys.stdin)
 
 from probe_network import MLPProbe
-probe = MLPProbe()
-probe.load_state_dict(torch.load("probe.pth"))
-probe = probe.cuda()
+try:
+    probe = MLPProbe()
+    probe.load_state_dict(torch.load("probe.pth"))
+    probe = probe.cuda()
+except:
+    probe = None
 
 def simplify_obs(obs):
     res = "r" + 'c'*len(obs['containers']) + 'i'*len(obs['items'])
@@ -97,7 +104,7 @@ def simplify_obs(obs):
 
 def render(action):
     global prior_latent
-    action = [ 0.00183289, -0.00295556, 0.0 ]
+    #action = [ 0.00183289, -0.00295556, 0.0 ]
     action = torch.tensor(action)
     obs_new = world.update(action)
     obs_emb, latents, obs_reconstruct = model_update(prior_latent, obs_new, action)
@@ -107,8 +114,8 @@ def render(action):
     #print(latents[0].norm(), latents[1].norm())
     #input()
     #prior_latent = model.init_state(obs_emb.cuda())
-    prior_latent = latents[-1]
-    #prior_latent = latents[-2]
+    #prior_latent = latents[-1]
+    prior_latent = latents[-2]
     pred_err = (latents[-2] - latents[-1]).norm().mean()
     obs_simplify = simplify_obs(obs_new)
     a = action.tolist()
@@ -121,18 +128,18 @@ def render(action):
     
     obs_delta = obs_emb - past_obs
     pred_delta = obs_reconstruct - past_obs
-    print("cheat | recons:", (cheat_reconstruct - obs_emb).norm(), (obs_reconstruct - obs_emb).norm())
-    print(past_obs)
-    print(obs_emb)
-    print(obs_delta)
-    #print("Obs delta:")
-    print("norm(d) norm(d') align center", obs_delta.norm(), pred_delta.norm(), (obs_delta @ pred_delta) / (obs_delta.norm() * pred_delta.norm()), pred_delta @ obs_reconstruct)
-    print("latent_v", (prior_latent - prev_latent).norm())
-    print("emb rec pas", obs_emb.norm(), obs_reconstruct.norm(), past_obs.norm())
-    print("raw   ", obs_emb)
-    print("reset ", cheat_reconstruct)
-    print("recons", obs_reconstruct)
-    input()
+    if mode == "text":
+        print("cheat | recons:", (cheat_reconstruct - obs_emb).norm(), (obs_reconstruct - obs_emb).norm())
+        print(past_obs)
+        print(obs_emb)
+        print(obs_delta)
+        print("norm(d) norm(d') align center", obs_delta.norm(), pred_delta.norm(), (obs_delta @ pred_delta) / (obs_delta.norm() * pred_delta.norm()), pred_delta @ obs_reconstruct / (obs_reconstruct.norm() * pred_delta.norm()))
+        print("latent_v", (prior_latent - prev_latent).norm())
+        print("emb rec pas", obs_emb.norm(), obs_reconstruct.norm(), past_obs.norm())
+        print("raw   ", obs_emb)
+        print("reset ", cheat_reconstruct)
+        print("recons", obs_reconstruct)
+        input()
 
     distances = np.linalg.norm(obs_reconstruct.numpy() - precomputed_embeddings, axis=-1)
     #distances = np.linalg.norm(cheat_reconstruct.numpy() - precomputed_embeddings, axis=-1)
@@ -147,19 +154,23 @@ def render(action):
     #print(np.min(distances), obs_err, max_position)
     #input()
 
-    with torch.no_grad():
-        v = obs_reconstruct.unsqueeze(0).cuda()
-        probe_res = probe(v).cpu()[0]
-    probe_x, probe_y = probe_res
     title = f"Interactive world (obs: {obs_simplify}, action: [{a[0]:.3f}, {a[1]:.3f}, {a[2]:.3f}], obs_err: {obs_err:.3f} obs_mag: {obs_mag:.3f}"
-    title += f" latent_mag: {latent_mag:.3f} pred_err: {pred_err:.3f} probe ({probe_x:.3f}, {probe_y:.3f})"
+    if probe:
+        with torch.no_grad():
+            v = obs_reconstruct.unsqueeze(0).cuda()
+            probe_res = probe(v).cpu()[0]
+        probe_x, probe_y = probe_res
+        title += f" latent_mag: {latent_mag:.3f} pred_err: {pred_err:.3f} probe ({probe_x:.3f}, {probe_y:.3f})"
+    else:
+        title += f" latent_mag: {latent_mag:.3f} pred_err: {pred_err:.3f}"
     title += f" closest ({max_position[0]:.3f}, {max_position[1]:.3f}) real ({world.robot.pos[0]:.3f}, {world.robot.pos[1]:.3f})"
     plotter.set_title(title)
 
     display = world.render()
     display = 255 - np.mean(display, axis=-1)
-    plotter.plot_image_section(display, start_row=0)
-    #plotter.draw()
+    if mode == "visual":
+        plotter.plot_image_section(display, start_row=0)
+        plotter.draw()
 
 try:
     while True:
