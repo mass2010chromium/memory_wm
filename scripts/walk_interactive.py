@@ -17,8 +17,8 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-    data = torch.load(os.path.join(out_dir, "274.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_3")
+    data = torch.load(os.path.join(out_dir, "14.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -37,8 +37,8 @@ with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
     config = json.load(jf)
 model, latents = load_model(config)
 
-#mode = "visual"
-mode = "text"
+mode = "visual"
+#mode = "text"
 
 def model_update(latent, obs, action):
     obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)
@@ -158,6 +158,7 @@ def render(action):
     if probe:
         with torch.no_grad():
             v = obs_reconstruct.unsqueeze(0).cuda()
+            #v = obs_emb.unsqueeze(0).cuda()
             probe_res = probe(v).cpu()[0]
         probe_x, probe_y = probe_res
         title += f" latent_mag: {latent_mag:.3f} pred_err: {pred_err:.3f} probe ({probe_x:.3f}, {probe_y:.3f})"

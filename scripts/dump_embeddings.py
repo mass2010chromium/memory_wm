@@ -77,8 +77,8 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
         config = json.load(jf)
-    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
-    checkpoint = os.path.join(checkpoint_dir, "66.pth")
+    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_4")
+    checkpoint = os.path.join(checkpoint_dir, "80.pth")
     model, latents = load_model(config, checkpoint)
 
     import sys

@@ -22,9 +22,11 @@ from env_2d_dataset import World2dDataset, SmallPackedDataset
 from math_utils import slerp
 
 # Reproducibility
-torch.manual_seed(42)
+#torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_4")
+freeze_gen = 15
+weights_lambda = [20, 4, 1]
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
@@ -50,7 +52,6 @@ def init_model(model_config):
     return model, optimizer, latent_cache, observation_cache
 
 def load_model(model_config, epoch):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_2")
     data = torch.load(os.path.join(out_dir, f"{epoch}.pth"), weights_only=True)
 
     model = Predictor(**model_config).to(device)
@@ -61,7 +62,7 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
-start_epoch = 281
+start_epoch = 341
 model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
 #start_epoch = 0
 #model, optimizer, latent_cache, observation_cache = init_model(config)
@@ -133,11 +134,15 @@ def rollout_latents(latents, active_frames):
 
 lock_grad = False
 #run = None
-with wandb.init(name="mini-wm-hard-freeze") as run:
+with wandb.init(name="mini-wm-dynamic-encoding") as run:
 #if True:
+    print("Saving to", out_dir)
+    print("Weights:", weights_lambda)
+    print("Observation freeze epoch:", freeze_gen)
     for epoch in range(start_epoch, num_epochs):
+        torch.manual_seed(epoch + 1)
         model.train()
-        if epoch >= 10 and not lock_grad:
+        if epoch >= freeze_gen and not lock_grad:
             model.cat_embedding.requires_grad = False
             for param in model.obs_proj.parameters():
                 param.requires_grad = False
@@ -248,9 +253,9 @@ with wandb.init(name="mini-wm-hard-freeze") as run:
             latent_losses = latent_pred_loss + ol_latent_loss + cl_latent_loss
             denom = torch.max(pred_losses, latent_losses).detach()
             loss = (
-                20*pred_losses / denom
-                + latent_losses / denom
-                + sigreg_loss
+                weights_lambda[0]*pred_losses / denom
+                + weights_lambda[1]*latent_losses / denom
+                + weights_lambda[2]*sigreg_loss
             )
             outputs = cl_latents
 

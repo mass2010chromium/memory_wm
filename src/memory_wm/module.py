@@ -386,10 +386,11 @@ class Predictor(nn.Module):
         full_obs_token = rearrange(self.obs_proj_2(obs_embedding), "b d -> b 1 d")
 
 
-        #q0 = self.query_tokens[0].expand(B, 1, D)
-        #q1 = self.query_tokens[1].expand(B, 1, D)
-        #history_and_obs = torch.cat((prior_latents, q0, full_obs_token, q1), 1)
-        history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
+        # Dummy token maybe for encoding like, action to velocity map. Should make it easier to learn via attention
+        q0 = self.query_tokens[0].expand(B, 1, D)
+        q1 = self.query_tokens[1].expand(B, 1, D)
+        history_and_obs = torch.cat((q0, q1, prior_latents, full_obs_token), 1)
+        #history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)
@@ -397,7 +398,7 @@ class Predictor(nn.Module):
         output = self.dynamics(history_and_obs, mask=None, c=c)
         # Get results of query tokens only.
         #return output[:, [1, 3], ...]
-        return output
+        return output[:, [2, 3], ...]
 
         #action_token = rearrange(self.action_proj(action), "b d -> b 1 d")
         #tokens = torch.cat((prior_latents, action_token, full_obs_token), 1)
