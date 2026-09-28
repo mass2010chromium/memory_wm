@@ -1,6 +1,7 @@
 import json
 import os
 SCRIPT_DIR = os.path.dirname(__file__)
+import re
 
 from einops import rearrange, einsum
 import torch
@@ -24,7 +25,7 @@ from math_utils import slerp
 # Reproducibility
 #torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_no_v_sigreg")
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_two_token")
 freeze_gen = 15
 weights_lambda = [10, 1, 1]
 os.makedirs(out_dir, exist_ok=True)
@@ -65,10 +66,30 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
+
+mode = "resume"
+#mode = "restart"
+if mode == "resume":
+    try:
+        filenames = os.listdir(out_dir)
+    except:
+        print("Folder not found, starting from zero")
+        filenames = None
+        mode = "restart"
+
+    if filenames is not None:
+        numbers = [int(m.group(1)) for s in strings if (m := re.fullmatch(r'([0-9]+)\.pth', s))]
+        if len(numbers) == 0:
+            print("No checkpoints found, starting from zero")
+            mode = "restart"
+        else:
+            start_epoch = max(numbers) + 1
+            model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+if mode == "restart":
+    start_epoch = 0
+    model, optimizer, latent_cache, observation_cache = init_model(config)
 #start_epoch = 4
 #model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-start_epoch = 0
-model, optimizer, latent_cache, observation_cache = init_model(config)
 
 def get_ordered_row(label, dtype=torch.float32):
     ret = torch.zeros(dataset.data_map[label].shape, dtype=dtype, device=device)
