@@ -24,9 +24,9 @@ from math_utils import slerp
 # Reproducibility
 #torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_4")
-freeze_gen = 15
-weights_lambda = [20, 4, 1]
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_1")
+freeze_gen = 25
+weights_lambda = [40, 10, 1]
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
@@ -62,20 +62,26 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
-start_epoch = 341
-model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-#start_epoch = 0
-#model, optimizer, latent_cache, observation_cache = init_model(config)
+#start_epoch = 121
+#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+start_epoch = 0
+model, optimizer, latent_cache, observation_cache = init_model(config)
 
-all_actions = torch.tensor(dataset.data_map['action']).to(device)
-all_obs = torch.tensor(dataset.data_map['observation.tokens']).to(device)
-all_mask = torch.tensor(dataset.data_map['observation.token_mask']).to(device)
-all_cat = torch.tensor(dataset.data_map['observation.token_categories']).to(device)
+def get_ordered_row(label, dtype=torch.float32):
+    ret = torch.zeros(dataset.data_map[label].shape, dtype=dtype, device=device)
+    for i, v in zip(dataset.data_map['index'], dataset.data_map[label]):
+        ret[i] = torch.tensor(v, dtype=dtype, device=device)
+    return ret
+all_actions = get_ordered_row('action')
+#all_obs = torch.tensor(dataset.data_map['observation.tokens']).to(device)
+#all_mask = torch.tensor(dataset.data_map['observation.token_mask']).to(device)
+#all_cat = torch.tensor(dataset.data_map['observation.token_categories']).to(device)
 
 num_epochs = 500
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
 scheduler.step(start_epoch)
 save_interval = 1
+keep_interval = 50
 
 use_temporal_straightening = True
 predict_past = False
@@ -134,11 +140,12 @@ def rollout_latents(latents, active_frames):
 
 lock_grad = False
 #run = None
-with wandb.init(name="mini-wm-dynamic-encoding") as run:
+with wandb.init(name="mini-wm-action-fix") as run:
 #if True:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
     print("Observation freeze epoch:", freeze_gen)
+    prev_save_path = None
     for epoch in range(start_epoch, num_epochs):
         torch.manual_seed(epoch + 1)
         model.train()
@@ -249,7 +256,7 @@ with wandb.init(name="mini-wm-dynamic-encoding") as run:
                 + (1/B)*(latent_pred_loss + ol_latent_loss + cl_latent_loss)
                 + 0.09 * sigreg_loss
             )
-            pred_losses = pred_loss + ol_obs_loss + cl_obs_loss
+            pred_losses = pred_loss + 4*ol_obs_loss + cl_obs_loss
             latent_losses = latent_pred_loss + ol_latent_loss + cl_latent_loss
             denom = torch.max(pred_losses, latent_losses).detach()
             loss = (
@@ -299,8 +306,8 @@ with wandb.init(name="mini-wm-dynamic-encoding") as run:
                 ol_latent_loss.item(),
                 cl_latent_loss.item()
             ])
-            running_sigreg_loss += torch.tensor(sigreg_losses).detach().cpu() * B
-            running_drift_mag += torch.tensor(consistency_losses).detach().cpu() * B
+            running_sigreg_loss += torch.tensor([x.detach().cpu() for x in sigreg_losses]) * B
+            running_drift_mag += torch.tensor([x.detach().cpu() for x in consistency_losses]) * B
 
         scheduler.step(epoch+1)
         latent_cache = next_latent_cache
@@ -345,10 +352,15 @@ with wandb.init(name="mini-wm-dynamic-encoding") as run:
         print(f"Epoch {epoch+1}/{num_epochs} — loss: {epoch_loss:.4f}")
 
         if (epoch + 1) % save_interval == 0:
+            save_path = os.path.join(out_dir, f"{epoch}.pth")
             torch.save({
                 "epoch": epoch,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
                 "latent_cache": latent_cache,
                 "obs_cache": observation_cache
-            }, os.path.join(out_dir, f"{epoch}.pth"))
+            }, save_path)
+            keep = ((epoch + 1) % keep_interval == 0) or epoch+1 == freeze_gen
+            if prev_save_path is not None and not keep:
+                os.remove(prev_save_path)
+            prev_save_path = save_path

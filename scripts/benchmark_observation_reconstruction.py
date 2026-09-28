@@ -97,8 +97,10 @@ def main():
         world = World2d(world_data)
         world.reset()
         init_obs = world.update([0.0, 0.0, 0.0])
+        init_pos = np.copy(world.robot.pos)
 
         model, checkpoint, precomputed_embeddings = ensure_exists(world, seed, model, checkpoint)
+        world.robot.pos = init_pos
         
         # Pick a target point uniformly in [0, 1] x [0, 1]
         target = np.random.uniform(0, 1, 2)
@@ -109,6 +111,8 @@ def main():
         if dist > max_movement:
             delta = delta * (max_movement / dist)
         target = world.robot.pos + delta
+        #print(seed, world.robot.pos, target)
+        #exit(0)
 
         obs_tokens, obs_categories, token_mask = tokenize_obs(init_obs, pad_to_size=MAX_TOKENS)
         
@@ -169,8 +173,9 @@ def main():
 
         results.append({
             "seed": seed,
-            "target": target.tolist(),
-            "final_pos": world.robot.pos.tolist(),
+            "start": init_pos.tolist(),
+            "target": np.copy(target).tolist(),
+            #"final_pos": np.copy(world.robot.pos).tolist(),
             "steps": step_count,
             "obs_error": obs_err,
             "trajectory": trajectory,
