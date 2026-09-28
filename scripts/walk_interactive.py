@@ -17,8 +17,8 @@ from memory_wm.module import Predictor
 from env_2d import tokenize_obs, World2d, MAX_TOKENS
 
 def load_model(model_config):
-    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_4")
-    data = torch.load(os.path.join(out_dir, "349.pth"), weights_only=True)
+    out_dir = os.path.join(SCRIPT_DIR, "checkpoints_1")
+    data = torch.load(os.path.join(out_dir, "149.pth"), weights_only=True)
 
     model = Predictor(**model_config).cuda()
     model.load_state_dict(data['model_state'])
@@ -37,8 +37,8 @@ with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
     config = json.load(jf)
 model, latents = load_model(config)
 
-#mode = "visual"
-mode = "text"
+mode = "visual"
+#mode = "text"
 
 def model_update(latent, obs, action):
     obs_tokens, obs_categories, token_mask = tokenize_obs(obs, pad_to_size=MAX_TOKENS)

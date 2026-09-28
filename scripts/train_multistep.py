@@ -270,8 +270,8 @@ with wandb.init(name=run_name) as run:
             sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), sigreg(3*velocity), sigreg(3*obs_velocity), sigreg(obs_reconstruct)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, sigreg(obs_velocity)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, 0]
-            #_sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
-            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1]]
+            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
+            #_sigreg_losses = [sigreg_losses[0], sigreg_losses[1]]
             sigreg_loss = sum(_sigreg_losses)
 
             # Full loss (reconstruction and dynamics)
