@@ -369,14 +369,14 @@ class Predictor(nn.Module):
     def openloop_dynamics(self, prior_latents, action):
         # Required since we are doing single-step single-step prediction... no action or state history.
         B, D = prior_latents.shape
+        prior_latents = rearrange(prior_latents, "b d -> b 1 d")
         c = rearrange(action, "b a -> b 1 a") # For conditionalblock
         q0 = self.query_tokens[0].expand(B, 1, D)
         q1 = self.query_tokens[1].expand(B, 1, D)
         history_and_obs = torch.cat((q0, q1, prior_latents), 1)
-        prior_latents = rearrange(history_and_obs, "b d -> b 1 d")
 
         output = self.dynamics(prior_latents, mask=None, c=c)
-        return output[:, 0, :]
+        return output[:, -1, :]
 
     def predict_latent(self, prior_latents, obs_embedding, action):
         # Required since we are doing single-step single-step prediction... no action or state history.

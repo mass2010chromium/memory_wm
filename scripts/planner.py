@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "world.json"), "r") as jf:
         data = json.load(jf)
-    seed = 44
+    seed = 45
     np.random.seed(seed)
     world = World2d(data)
     last_obs = world.reset()
@@ -130,6 +130,7 @@ if __name__ == "__main__":
         world.robot.pos[:] = pos
         item = world.items.pop(-1)
         print("item pos:",item.pos)
+        input()
         world.robot.inventory = item
         obs = embed_obs(world.get_obs())
 
