@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
         config = json.load(jf)
-    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_no_v_sigreg")
+    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_static_token")
     checkpoint = os.path.join(checkpoint_dir, "4.pth")
     model, latents = load_model(config, checkpoint)
 
