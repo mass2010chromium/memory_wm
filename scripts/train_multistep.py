@@ -25,7 +25,8 @@ from math_utils import slerp
 # Reproducibility
 #torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_two_token")
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_static_token")
+run_name = "mini-wm-test-full"
 freeze_gen = 15
 weights_lambda = [10, 1, 1]
 os.makedirs(out_dir, exist_ok=True)
@@ -33,7 +34,7 @@ os.makedirs(out_dir, exist_ok=True)
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
 #dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=8)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -78,7 +79,7 @@ if mode == "resume":
         mode = "restart"
 
     if filenames is not None:
-        numbers = [int(m.group(1)) for s in strings if (m := re.fullmatch(r'([0-9]+)\.pth', s))]
+        numbers = [int(m.group(1)) for s in filenames if (m := re.fullmatch(r'([0-9]+)\.pth', s))]
         if len(numbers) == 0:
             print("No checkpoints found, starting from zero")
             mode = "restart"
@@ -165,7 +166,7 @@ def rollout_latents(latents, active_frames):
 
 lock_grad = False
 #run = None
-with wandb.init(name="mini-wm-no-v-sigreg") as run:
+with wandb.init(name=run_name) as run:
 #if True:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
