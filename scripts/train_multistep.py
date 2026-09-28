@@ -51,8 +51,11 @@ def init_model(model_config):
     observation_cache = torch.zeros((len(dataset), obs_dim)).to(device)
     return model, optimizer, latent_cache, observation_cache
 
+prev_save_path = None
 def load_model(model_config, epoch):
-    data = torch.load(os.path.join(out_dir, f"{epoch}.pth"), weights_only=True)
+    global prev_save_path
+    prev_save_path = os.path.join(out_dir, f"{epoch}.pth")
+    data = torch.load(prev_save_path, weights_only=True)
 
     model = Predictor(**model_config).to(device)
     model.load_state_dict(data['model_state'])
@@ -62,15 +65,16 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
-#start_epoch = 121
-#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-start_epoch = 0
-model, optimizer, latent_cache, observation_cache = init_model(config)
+start_epoch = 147
+model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+#start_epoch = 0
+#model, optimizer, latent_cache, observation_cache = init_model(config)
 
 def get_ordered_row(label, dtype=torch.float32):
     ret = torch.zeros(dataset.data_map[label].shape, dtype=dtype, device=device)
-    for i, v in zip(dataset.data_map['index'], dataset.data_map[label]):
-        ret[i] = torch.tensor(v, dtype=dtype, device=device)
+    data = torch.tensor(dataset.data_map[label], dtype=dtype, device=device)
+    for i, d in enumerate(dataset.data_map['index']):
+        ret[d] = data[i]
     return ret
 all_actions = get_ordered_row('action')
 #all_obs = torch.tensor(dataset.data_map['observation.tokens']).to(device)
@@ -145,7 +149,6 @@ with wandb.init(name="mini-wm-test-no-v-sigreg") as run:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
     print("Observation freeze epoch:", freeze_gen)
-    prev_save_path = None
     for epoch in range(start_epoch, num_epochs):
         torch.manual_seed(epoch + 1)
         model.train()
@@ -361,7 +364,7 @@ with wandb.init(name="mini-wm-test-no-v-sigreg") as run:
                 "latent_cache": latent_cache,
                 "obs_cache": observation_cache
             }, save_path)
-            keep = ((epoch + 1) % keep_interval == 0) or epoch+1 == freeze_gen
-            if prev_save_path is not None and not keep:
+            keep = ((epoch % keep_interval) == 0) or epoch == freeze_gen
+            if (prev_save_path is not None) and not keep:
                 os.remove(prev_save_path)
             prev_save_path = save_path
