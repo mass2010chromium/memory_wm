@@ -24,9 +24,9 @@ from math_utils import slerp
 # Reproducibility
 #torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_1")
-freeze_gen = 25
-weights_lambda = [40, 10, 1]
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints_no_v_sigreg")
+freeze_gen = 15
+weights_lambda = [10, 1, 1]
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
@@ -77,11 +77,11 @@ all_actions = get_ordered_row('action')
 #all_mask = torch.tensor(dataset.data_map['observation.token_mask']).to(device)
 #all_cat = torch.tensor(dataset.data_map['observation.token_categories']).to(device)
 
-num_epochs = 500
+num_epochs = 100
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
 scheduler.step(start_epoch)
 save_interval = 1
-keep_interval = 50
+keep_interval = 5
 
 use_temporal_straightening = True
 predict_past = False
@@ -140,7 +140,7 @@ def rollout_latents(latents, active_frames):
 
 lock_grad = False
 #run = None
-with wandb.init(name="mini-wm-action-fix") as run:
+with wandb.init(name="mini-wm-test-no-v-sigreg") as run:
 #if True:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
@@ -245,7 +245,8 @@ with wandb.init(name="mini-wm-action-fix") as run:
             sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), sigreg(3*velocity), sigreg(3*obs_velocity), sigreg(obs_reconstruct)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, sigreg(obs_velocity)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, 0]
-            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
+            #_sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
+            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1]]
             sigreg_loss = sum(_sigreg_losses)
 
             # Full loss (reconstruction and dynamics)
@@ -256,7 +257,7 @@ with wandb.init(name="mini-wm-action-fix") as run:
                 + (1/B)*(latent_pred_loss + ol_latent_loss + cl_latent_loss)
                 + 0.09 * sigreg_loss
             )
-            pred_losses = pred_loss + 4*ol_obs_loss + cl_obs_loss
+            pred_losses = pred_loss + ol_obs_loss + cl_obs_loss
             latent_losses = latent_pred_loss + ol_latent_loss + cl_latent_loss
             denom = torch.max(pred_losses, latent_losses).detach()
             loss = (

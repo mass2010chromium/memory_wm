@@ -398,7 +398,7 @@ class Predictor(nn.Module):
         output = self.dynamics(history_and_obs, mask=None, c=c)
         # Get results of query tokens only.
         #return output[:, [1, 3], ...]
-        return output[:, [2, 3], ...]
+        return output[:, [-2, -1], ...]
 
         #action_token = rearrange(self.action_proj(action), "b d -> b 1 d")
         #tokens = torch.cat((prior_latents, action_token, full_obs_token), 1)
