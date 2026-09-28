@@ -32,7 +32,7 @@ os.makedirs(out_dir, exist_ok=True)
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
 #dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -65,10 +65,10 @@ def load_model(model_config, epoch):
     return model, optimizer, data['latent_cache'], data['obs_cache']
 
 sigreg = SIGReg().to(device)
-start_epoch = 147
-model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
-#start_epoch = 0
-#model, optimizer, latent_cache, observation_cache = init_model(config)
+#start_epoch = 4
+#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
+start_epoch = 0
+model, optimizer, latent_cache, observation_cache = init_model(config)
 
 def get_ordered_row(label, dtype=torch.float32):
     ret = torch.zeros(dataset.data_map[label].shape, dtype=dtype, device=device)
@@ -144,7 +144,7 @@ def rollout_latents(latents, active_frames):
 
 lock_grad = False
 #run = None
-with wandb.init(name="mini-wm-test-no-v-sigreg") as run:
+with wandb.init(name="mini-wm-no-v-sigreg") as run:
 #if True:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
