@@ -71,7 +71,7 @@ def run_benchmark():
         
         # Generate uniform random target in [0, 1] x [0, 1]
         target_pos = np.random.uniform(0.0, 1.0, size=2)
-        max_movement = 0.25
+        max_movement = 2.0
         delta = target_pos - world.robot.pos
         dist = np.linalg.norm(delta)
         if dist > max_movement:
@@ -110,12 +110,12 @@ def run_benchmark():
             with torch.no_grad():
                 action = planner.plan(latent_state[0], model.openloop_dynamics, reward_fn)
             
-            last_obs = world.update(action.cpu().numpy())
+            last_obs = world.update(action[0].cpu().numpy())
             
             # Re-initialize latent state at each step (Memoryless approach based on planner.py)
             #latent_state = model.init_state(embed_obs(last_obs))
             # Get proper CL latent
-            latent_state = model.predict_latent(latent_state, embed_obs(obs), clip_actions(action).unsqueeze(0))[:, 1, :]
+            latent_state = model.predict_latent(latent_state, embed_obs(last_obs), clip_actions(action[0]).unsqueeze(0))[:, 1, :]
             
             # Check actual physical distance to target
             current_dist = np.linalg.norm(world.robot.pos - target_pos)

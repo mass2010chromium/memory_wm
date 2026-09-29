@@ -373,7 +373,8 @@ class Predictor(nn.Module):
         c = rearrange(action, "b a -> b 1 a") # For conditionalblock
         q0 = self.query_tokens[0].expand(B, 1, D)
         q1 = self.query_tokens[1].expand(B, 1, D)
-        history_and_obs = torch.cat((q0, q1, prior_latents), 1)
+        #history_and_obs = torch.cat((q0, q1, prior_latents), 1)
+        history_and_obs = torch.cat((prior_latents,), 1)
 
         output = self.dynamics(prior_latents, mask=None, c=c)
         return output[:, -1, :]
@@ -392,8 +393,8 @@ class Predictor(nn.Module):
         # Dummy token maybe for encoding like, action to velocity map. Should make it easier to learn via attention
         q0 = self.query_tokens[0].expand(B, 1, D)
         q1 = self.query_tokens[1].expand(B, 1, D)
-        history_and_obs = torch.cat((q0, q1, prior_latents, full_obs_token), 1)
-        #history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
+        #history_and_obs = torch.cat((q0, q1, prior_latents, full_obs_token), 1)
+        history_and_obs = torch.cat((prior_latents, full_obs_token), 1)
 
         # Token 0 is the open loop latent (evolved with conditioning c)
         # Token 1 is the closed loop latent (evolved with conditioning and obs embedding by causal attention)

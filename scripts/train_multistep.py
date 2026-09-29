@@ -22,13 +22,15 @@ from env_2d_dataset import World2dDataset, SmallPackedDataset
 
 from math_utils import slerp
 
-# Reproducibility
-#torch.manual_seed(72)
 
-out_dir = os.path.join(SCRIPT_DIR, "checkpoints_static_token")
-run_name = "mini-wm-test-full"
+out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+run_name = "mini-wm-tune"
 freeze_gen = 15
 weights_lambda = [10, 1, 1]
+horizon_decay = 0.9
+horizon_speed = 2
+horizon_offset = 0
+velocity_factor = [3, 3]
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
@@ -89,8 +91,6 @@ if mode == "resume":
 if mode == "restart":
     start_epoch = 0
     model, optimizer, latent_cache, observation_cache = init_model(config)
-#start_epoch = 4
-#model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
 
 def get_ordered_row(label, dtype=torch.float32):
     ret = torch.zeros(dataset.data_map[label].shape, dtype=dtype, device=device)
@@ -103,7 +103,7 @@ all_actions = get_ordered_row('action')
 #all_mask = torch.tensor(dataset.data_map['observation.token_mask']).to(device)
 #all_cat = torch.tensor(dataset.data_map['observation.token_categories']).to(device)
 
-num_epochs = 100
+num_epochs = 25
 scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
 scheduler.step(start_epoch)
 save_interval = 1
@@ -171,6 +171,8 @@ with wandb.init(name=run_name) as run:
     print("Saving to", out_dir)
     print("Weights:", weights_lambda)
     print("Observation freeze epoch:", freeze_gen)
+    print("Horizon decay:", horizon_decay, "/", horizon_speed, "-", horizon_offset)
+    print("SIGRegV factors:", velocity_factor)
     for epoch in range(start_epoch, num_epochs):
         torch.manual_seed(epoch + 1)
         model.train()
@@ -227,7 +229,7 @@ with wandb.init(name=run_name) as run:
             cl_latents = latents[:, -1, :]
             ol_latents = latents[:, -2, :]
 
-            horizon_factor = torch.minimum(0.9 ** (frame_index - epoch/100), torch.tensor(1.0)).unsqueeze(-1).to(device)
+            horizon_factor = torch.minimum(horizon_decay ** (frame_index + horizon_offset - epoch/horizon_speed), torch.tensor(1.0)).unsqueeze(-1).to(device)
 
             future_frames = data_batch['future_frames'].to(device)
             # Special: This on uses live computed observations. Others use obs_emb cache... is this a problem?
@@ -236,13 +238,13 @@ with wandb.init(name=run_name) as run:
 
             ol_obs_loss = torch.tensor(0.0, device=device)
             ol_latent_loss = torch.tensor(0.0, device=device)
-            predict_horizon = 5#min(5, 2 + epoch // 20)
+            predict_horizon = max(3, epoch//horizon_speed - horizon_offset)
             future_latents = latents
             for i in range(1, predict_horizon):
                 _frames = (active_frames + i) % len(all_actions)
                 #future_latents, future_obs = rollout_latents(latent_cache[_frames - 1], _frames)
                 future_latents, future_obs = rollout_latents(future_latents[:, -2, :], _frames)
-                horizon_factor = torch.minimum(0.9 ** (frame_index + i - epoch/100), torch.tensor(1.0)).unsqueeze(-1).to(device)
+                horizon_factor = torch.minimum(horizon_decay ** (frame_index + i + horizon_offset - epoch/horizon_speed), torch.tensor(1.0)).unsqueeze(-1).to(device)
                 future_pred_loss, future_latent_loss, weight, _rec = get_losses(future_latents, future_frames - i, future_obs, horizon_factor)
                 ol_horizon_weight += weight
                 ol_obs_loss += future_pred_loss
@@ -253,7 +255,7 @@ with wandb.init(name=run_name) as run:
             future_latents = latents
             for i in range(1, predict_horizon):
                 future_latents, future_obs = rollout_latents(future_latents[:, -1, :], (active_frames + i) % len(all_actions))
-                horizon_factor = torch.minimum(0.9 ** (frame_index + i - epoch/100), torch.tensor(1.0)).unsqueeze(-1).to(device)
+                horizon_factor = torch.minimum(horizon_decay ** (frame_index + i + horizon_offset - epoch/horizon_speed), torch.tensor(1.0)).unsqueeze(-1).to(device)
                 future_pred_loss, future_latent_loss, weight, _rec = get_losses(future_latents, future_frames - i, future_obs, horizon_factor)
                 cl_horizon_weight += weight
                 cl_obs_loss += future_pred_loss
@@ -267,7 +269,13 @@ with wandb.init(name=run_name) as run:
             prior_obs[first_mask] = 0
             obs_velocity = obs_emb - prior_obs
 
-            sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), sigreg(3*velocity), sigreg(3*obs_velocity), sigreg(obs_reconstruct)]
+            sigreg_losses = [
+                sigreg(cl_latents),
+                sigreg(obs_emb),
+                sigreg(velocity_factor[0]*velocity),
+                sigreg(velocity_factor[1]*obs_velocity),
+                sigreg(obs_reconstruct)
+            ]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, sigreg(obs_velocity)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, 0]
             _sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
@@ -317,9 +325,6 @@ with wandb.init(name=run_name) as run:
                 next_latent_cache[active_frames] = slerp(latent_cache[active_frames], outputs, drift_factor)
                 next_observation_cache[active_frames] = obs_emb
 
-            loss.backward()                # backprop
-            optimizer.step()               # update weights
-
             #running_loss += loss.item() * B
             running_loss += _loss.item() * B
             running_reconstruction_loss += torch.tensor([
@@ -334,6 +339,9 @@ with wandb.init(name=run_name) as run:
             ])
             running_sigreg_loss += torch.tensor([x.detach().cpu() for x in sigreg_losses]) * B
             running_drift_mag += torch.tensor([x.detach().cpu() for x in consistency_losses]) * B
+
+            loss.backward()                # backprop
+            optimizer.step()               # update weights
 
         scheduler.step(epoch+1)
         latent_cache = next_latent_cache

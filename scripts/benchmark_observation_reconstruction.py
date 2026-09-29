@@ -183,14 +183,26 @@ def main():
             "pos_error": pos_err
         })
         
+    obs_errors = []
+    pos_errors = []
+    for entry in results:
+        obs_errors.append(entry['obs_error'])
+        pos_errors.append(entry['pos_error'])
+    obs_err = np.mean(obs_errors)
+    pos_err = np.mean(pos_errors)
     with open(args.output, "w") as f:
         json.dump({
             "checkpoint": checkpoint,
             "mode": args.mode,
+            "overall": {
+                "obs_error": obs_err,
+                "pos_error": pos_err
+            },
             "runs": results
         }, f, indent=4)
         
     print(f"Benchmarked {args.seeds} seeds in '{args.mode}' mode.")
+    print(f"obs {obs_err} pos {pos_err}")
     print(f"Results saved to {args.output}")
 
 if __name__ == "__main__":

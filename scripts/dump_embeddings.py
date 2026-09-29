@@ -77,14 +77,14 @@ if __name__ == "__main__":
 
     with open(os.path.join(SCRIPT_DIR, "config", "model_config.json"), "r") as jf:
         config = json.load(jf)
-    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints_static_token")
-    checkpoint = os.path.join(checkpoint_dir, "4.pth")
+    checkpoint_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+    checkpoint = os.path.join(checkpoint_dir, "24.pth")
     model, latents = load_model(config, checkpoint)
 
     import sys
     seed = 45
     targets = [seed]
-    out_dir = "embeddings_no_v_sigreg"
+    out_dir = "embeddings"
     if len(sys.argv) > 1:
         targets = sys.argv[1:]
         #seed = int(sys.argv[1])
