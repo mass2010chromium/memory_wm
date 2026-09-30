@@ -25,18 +25,18 @@ from math_utils import slerp
 
 out_dir = os.path.join(SCRIPT_DIR, "checkpoints")
 run_name = "mini-wm-tune"
-freeze_gen = 15
+freeze_gen = 25
 weights_lambda = [10, 1, 1]
 horizon_decay = 0.9
-horizon_speed = 2
+horizon_speed = 100
 horizon_offset = 0
-velocity_factor = [3, 3]
+velocity_factor = [30, 30]
+do_shuffle = False
 os.makedirs(out_dir, exist_ok=True)
 #dataset = World2dDataset(LeRobotDataset("local/world2d", root=os.path.join(SCRIPT_DIR, "world2d")))
 dataset = SmallPackedDataset(root=os.path.join(SCRIPT_DIR, "world2d_reorder"))
 batch_size = 1024
-#dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=True)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=8)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=do_shuffle, pin_memory=True, num_workers=8)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -48,7 +48,6 @@ obs_dim = config['obs_dim']
 def init_model(model_config):
     model = Predictor(**model_config).to(device)
 
-    criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
 
     latent_cache = torch.zeros((len(dataset), hidden_size)).to(device)
@@ -75,7 +74,7 @@ mode = "resume"
 if mode == "resume":
     try:
         filenames = os.listdir(out_dir)
-    except:
+    except OSError:
         print("Folder not found, starting from zero")
         filenames = None
         mode = "restart"
@@ -87,6 +86,7 @@ if mode == "resume":
             mode = "restart"
         else:
             start_epoch = max(numbers) + 1
+            #start_epoch = 10
             model, optimizer, latent_cache, observation_cache = load_model(config, start_epoch-1)
 if mode == "restart":
     start_epoch = 0
@@ -99,12 +99,12 @@ def get_ordered_row(label, dtype=torch.float32):
         ret[d] = data[i]
     return ret
 all_actions = get_ordered_row('action')
-#all_obs = torch.tensor(dataset.data_map['observation.tokens']).to(device)
-#all_mask = torch.tensor(dataset.data_map['observation.token_mask']).to(device)
-#all_cat = torch.tensor(dataset.data_map['observation.token_categories']).to(device)
+all_obs = get_ordered_row('observation.tokens')
+all_mask = get_ordered_row('observation.token_mask')
+all_cat = get_ordered_row('observation.token_categories')
 
-num_epochs = 25
-scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=num_epochs)
+num_epochs = 100
+scheduler = CosineAnnealingLR(optimizer, eta_min=1e-5, T_max=50)
 scheduler.step(start_epoch)
 save_interval = 1
 keep_interval = 5
@@ -173,6 +173,7 @@ with wandb.init(name=run_name) as run:
     print("Observation freeze epoch:", freeze_gen)
     print("Horizon decay:", horizon_decay, "/", horizon_speed, "-", horizon_offset)
     print("SIGRegV factors:", velocity_factor)
+    print("Shuffling:", do_shuffle)
     for epoch in range(start_epoch, num_epochs):
         torch.manual_seed(epoch + 1)
         model.train()
@@ -265,7 +266,19 @@ with wandb.init(name=run_name) as run:
             # This might be huge... ask Devesh
             velocity = cl_latents - prior_latents
 
-            prior_obs = observation_cache[active_frames - 1]
+            
+            # Fixing SIGRegV bad signal: Extra/fake observation velocity spread is gotten from noise in the optimizer update.
+            # Fix this by using the true blue observation embedder for prior_obs.
+            # For latents...... literature does weight-space interpolation/EMA which gives more "realistic" output? somehow
+            #   conditioned on the structure of the NN itself. Upon further thought, I don't understand why this is a solution
+            #   at all, since the latent cannot be computed directly from observations... so even an EMA model would not work.
+            prev_frame = active_frames - 1
+            prior_obs = model.embed_obs(
+                all_obs[prev_frame],   # x
+                all_mask[prev_frame],
+                all_cat[prev_frame]
+            )
+            #prior_obs = observation_cache[active_frames - 1]
             prior_obs[first_mask] = 0
             obs_velocity = obs_emb - prior_obs
 
@@ -278,7 +291,7 @@ with wandb.init(name=run_name) as run:
             ]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, sigreg(obs_velocity)]
             #sigreg_losses = [sigreg(cl_latents), sigreg(obs_emb), 0, 0]
-            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1], sigreg_losses[2], sigreg_losses[3]]
+            _sigreg_losses = [sigreg_losses[0], sigreg_losses[1], 0.1*sigreg_losses[2], 0.1*sigreg_losses[3]]
             #_sigreg_losses = [sigreg_losses[0], sigreg_losses[1]]
             sigreg_loss = sum(_sigreg_losses)
 
@@ -293,9 +306,13 @@ with wandb.init(name=run_name) as run:
             pred_losses = pred_loss + ol_obs_loss + cl_obs_loss
             latent_losses = latent_pred_loss + ol_latent_loss + cl_latent_loss
             denom = torch.max(pred_losses, latent_losses).detach()
+            denom1 = denom
+            denom2 = denom
+            #denom1 = pred_losses.detach()
+            #denom2 = latent_losses.detach()
             loss = (
-                weights_lambda[0]*pred_losses / denom
-                + weights_lambda[1]*latent_losses / denom
+                weights_lambda[0]*pred_losses / denom1
+                + weights_lambda[1]*latent_losses / denom2
                 + weights_lambda[2]*sigreg_loss
             )
             outputs = cl_latents

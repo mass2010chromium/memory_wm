@@ -259,6 +259,8 @@ class MLP(nn.Module):
                 nn.LayerNorm(hidden_dim),
                 act_fn(),
             ))
+        # Recommended instead of identity skip for input-output gradient flow by Claude.
+        self.skip_proj = nn.Linear(input_dim, output_dim)
         self.out_proj = nn.Linear(hidden_dim, output_dim)
         self.in_dim = input_dim
         self.out_dim = output_dim
@@ -281,10 +283,10 @@ class MLP(nn.Module):
         """
         # return self.net(_x)
         x = self.in_proj(_x)
-        x[..., :self.in_dim] += _x
+        x[..., :self.in_dim] = x[..., :self.in_dim] + _x
         for block in self.hidden_layers:
             x = block(x) + x
-        return x[..., :self.out_dim] + self.out_proj(x)
+        return self.skip_proj(_x) + self.out_proj(x)
 
 
 class Predictor(nn.Module):
@@ -401,7 +403,6 @@ class Predictor(nn.Module):
         c = rearrange(action, "b a -> b 1 a") # For conditionalblock
         output = self.dynamics(history_and_obs, mask=None, c=c)
         # Get results of query tokens only.
-        #return output[:, [1, 3], ...]
         return output[:, [-2, -1], ...]
 
         #action_token = rearrange(self.action_proj(action), "b d -> b 1 d")
@@ -428,10 +429,9 @@ class Predictor(nn.Module):
             "d, b n -> b d n"
         )
         # Observation tokens are left aligned. Poor design decision, maybe?
-        token_count = einsum(token_mask, 'b n -> b')    # Row sum
+        token_count = einsum(token_mask, 'b n -> b').long() # Row sum
         x = self.obs_embedder(x, attention_mask)
         return x[torch.arange(x.size(0)), token_count-1]  # Return last token embedding
-        
 
     def init_state(self, obs_embed):
         return self.init_embedder(obs_embed)

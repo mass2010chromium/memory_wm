@@ -5,7 +5,7 @@ import py_terminal_plotter as ptp
 
 plotter = ptp.TerminalPlot(x_range=[0, 1], y_range=[0, 1])
 plotter.create_axes()
-plotter.setup_image(100, 100, z_range=[0, 1])
+plotter.setup_image(100, 100, z_range=[0, 2])
 
 # Flip to r, c; and then flip to top left corner convention
 embeddings = einops.rearrange(np.load("embeddings.npy"), 'x y n -> y x n')[::-1]
